@@ -1,6 +1,6 @@
 # What is OceanBase database
 
-OceanBase Database is a native distributed relational database. It is developed entirely by Alibaba and Ant Group. OceanBase Database is built on a common server cluster. Based on the Paxos protocol and its distributed structure, OceanBase Database provides high availability and linear scalability for financial institutions. OceanBase Database is not dependent on specific hardware architectures.
+OceanBase Database is a native distributed relational database. It is developed entirely by Alibaba and Ant Group. OceanBase Database is built on a common server cluster. Based on the Paxos protocol and its distributed structure, OceanBase Database provides high availability and linear scalability. OceanBase Database is not dependent on specific hardware architectures.
 
 OceanBase Database has these features:
 
@@ -8,7 +8,7 @@ OceanBase Database has these features:
     Single server failure recovers automatically. OceanBase Database supports cross-city disaster tolerance for multiple IDCs and zero data loss. OceanBase Database meets the financial industry Level 6 disaster recovery standard (RPO=0, RTO<=30 seconds).
 - Linear scalability
     OceanBase Database scales transparently to applications and balances the system load automatically. Its cluster can contain more than 1500 nodes. The data volume can reach petabytes. The records in a single table can be more than a trillion rows.
-- High compatible with MySQL
+- Highly compatible with MySQL
     OceanBase Database is compatible with MySQL protocol and syntax. You can access to OceanBase Database by using MySQL client.
 - High performance
     OceanBase Database supports quasi memory level data change and exclusive encoding compression. Together with the linear scalability, OceanBase Database provides high performance.
@@ -36,16 +36,54 @@ Refer to the [Get Started guide](https://open.oceanbase.com/quickStart) (Simplif
 
 OceanBase Database is under [MulanPubL - 2.0](https://license.coscl.org.cn/MulanPubL-2.0/index.html) license. You can freely copy and use the source code. When you modify or distribute the source code, please obey the MulanPubL - 2.0 license.
 
+## OS compatibility list
+
+| OS | Ver. | Arch | Compilable | Package Deployable | Compiled Binary Deployable | Mysqltest Passed |
+| ---- | ---- | ---- | ---- | ---- | ---- | ---- |
+| CentOS | 7.2,8.3 | x86_64 | ✅ | ✅ | ✅ | ✅ |
+| Debian | 9.8,10.9 | x86_64 | ✅ | ✅ | ✅ | ✅ |
+| Fedora | 33 | x86_64 | ✅ | ✅ | ✅ | ✅ |
+| MacOS | any | x86_64 | ❌ | ❌ | ❌ | ❌ |
+| openSUSE | 15.2 | x86_64 | ✅ | ✅ | ✅ | ✅ |
+| OpenAnolis | 8.2 | x86_64 | ✅ | ✅ | ✅ | ✅ |
+| SUSE | 15.2 | x86_64 | ✅ | ✅ | ✅ | ✅ |
+| Ubuntu | 16.04,18.04,20.04 | x86_64 | ✅ | ✅ | ✅ | ✅ |
+
 ## How to build
 
-#### debug mode
-> sh build.sh debug --init --make
+### Preparation
 
-#### release mode
-> sh build.sh release --init --make
+Before building, you need to confirm that your device has installed the necessary software.
 
-#### rpm packages
-> sh build.sh rpm --init && cd build_rpm && make -j16 rpm
+#### Fedora based (, including CentOS, Fedora, OpenAnolis, RedHat, etc.)
+```sh
+yum install git wget rpm* cpio make glibc-devel glibc-headers binutils
+```
+
+#### Debian based (, including Debian, Ubuntu, etc.)
+```sh
+apt-get install git wget rpm rpm2cpio cpio make build-essential binutils
+```
+
+#### SUSE based (, including SUSE, openSUSE, etc.)
+```sh
+zypper install git wget rpm cpio make glibc-devel binutils
+```
+
+### debug mode
+```bash
+bash build.sh debug --init --make
+```
+
+### release mode
+```bash
+bash build.sh release --init --make
+```
+
+### rpm packages
+```bash
+bash build.sh rpm --init && cd build_rpm && make -j16 rpm
+```
 
 ## Contributing
 
