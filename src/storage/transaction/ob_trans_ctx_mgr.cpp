@@ -162,7 +162,7 @@ void ObPartitionTransCtxMgr::reset()
   clog_aggregation_buffer_amount_ = 0;
   last_refresh_tenant_config_ts_ = 0;
   restore_snapshot_version_ = OB_INVALID_TIMESTAMP;
-  last_restore_log_id_ = OB_INVALID_ID;
+  last_restore_log_ts_ = OB_INVALID_TIMESTAMP;
   aggre_log_container_.reset();
   is_dup_table_ = false;
 }
@@ -278,13 +278,20 @@ void ObPartitionTransCtxMgr::StateHelper::restore_state()
 }
 
 int ObPartitionTransCtxMgr::get_trans_ctx(const ObTransID& trans_id, const bool for_replay, const bool is_readonly,
-    const bool is_bounded_staleness_read, const bool need_completed_dirty_txn, bool& alloc, ObTransCtx*& ctx)
+    const bool is_bounded_staleness_read, const bool need_completed_dirty_txn, bool& alloc, ObTransCtx*& ctx,
+    const bool wait_init /*true*/)
 {
   int ret = OB_SUCCESS;
   RLockGuard guard(rwlock_);
 
-  if (OB_FAIL(get_trans_ctx_(
-          trans_id, for_replay, is_readonly, is_bounded_staleness_read, need_completed_dirty_txn, alloc, ctx))) {
+  if (OB_FAIL(get_trans_ctx_(trans_id,
+          for_replay,
+          is_readonly,
+          is_bounded_staleness_read,
+          need_completed_dirty_txn,
+          alloc,
+          ctx,
+          wait_init))) {
     TRANS_LOG(DEBUG, "get transaction context error", K(trans_id), K(for_replay), K(is_readonly), K(alloc));
   } else {
     // do nothing
@@ -377,7 +384,8 @@ int ObPartitionTransCtxMgr::remove_mem_ctx_for_trans_ctx(memtable::ObMemtable* m
 }
 
 int ObPartitionTransCtxMgr::get_trans_ctx_(const ObTransID& trans_id, const bool for_replay, const bool is_readonly,
-    const bool is_bounded_staleness_read, const bool need_completed_dirty_txn, bool& alloc, ObTransCtx*& ctx)
+    const bool is_bounded_staleness_read, const bool need_completed_dirty_txn, bool& alloc, ObTransCtx*& ctx,
+    const bool wait_init /*true*/)
 {
   int ret = OB_SUCCESS;
   ObTransCtx* tmp_ctx = NULL;
@@ -418,7 +426,7 @@ int ObPartitionTransCtxMgr::get_trans_ctx_(const ObTransID& trans_id, const bool
       } else {
         // FIXME
         bool is_inited = tmp_ctx->is_inited();
-        while (!is_inited && count < MAX_LOOP_COUNT) {
+        while (!is_inited && wait_init && count < MAX_LOOP_COUNT) {
           count++;
           ObTransCond::usleep(1);
           is_inited = tmp_ctx->is_inited();
@@ -426,7 +434,7 @@ int ObPartitionTransCtxMgr::get_trans_ctx_(const ObTransID& trans_id, const bool
             tmp_ctx->set_partition(partition_);
           }
         }
-        if (!is_inited) {
+        if (!is_inited && wait_init) {
           TRANS_LOG(WARN, "get transaction context not inited", K(trans_id));
         }
 
@@ -482,12 +490,12 @@ int ObPartitionTransCtxMgr::get_trans_ctx_(const ObTransID& trans_id, const bool
           } else {
             // FIXME
             bool is_inited = tmp_ctx->is_inited();
-            while (!is_inited && count < MAX_LOOP_COUNT) {
+            while (!is_inited && wait_init && count < MAX_LOOP_COUNT) {
               count++;
               ObTransCond::usleep(1);
               is_inited = tmp_ctx->is_inited();
             }
-            if (!is_inited) {
+            if (!is_inited && wait_init) {
               TRANS_LOG(WARN, "get transaction context not inited", K(trans_id));
             }
             ctx = tmp_ctx;
@@ -938,21 +946,21 @@ int ObPartitionTransCtxMgr::replay_start_working_log(const int64_t timestamp, co
   if (IS_NOT_INIT) {
     TRANS_LOG(WARN, "ObPartitionTransCtxMgr not inited");
     ret = OB_NOT_INIT;
-  } else if (OB_INVALID_TIMESTAMP != restore_snapshot_version_ && OB_INVALID_ID != last_restore_log_id_) {
-    ObClearTransAfterRestoreLog fn(restore_snapshot_version_, last_restore_log_id_, timestamp);
+  } else if (OB_INVALID_TIMESTAMP != restore_snapshot_version_ && OB_INVALID_TIMESTAMP != last_restore_log_ts_) {
+    ObClearTransAfterRestoreLog fn(restore_snapshot_version_, last_restore_log_ts_, timestamp);
     if (OB_FAIL(ctx_map_mgr_.foreach_ctx(fn))) {
       ret = fn.get_ret();
       TRANS_LOG(WARN, "for each transaction context error", K(ret), "manager", *this);
     } else {
       TRANS_LOG(INFO, "success to clear_trans_after_restore", K(ret), "manager", *this);
-      last_restore_log_id_ = OB_INVALID_ID;
+      last_restore_log_ts_ = OB_INVALID_TIMESTAMP;
       restore_snapshot_version_ = OB_INVALID_TIMESTAMP;
     }
   } else {
     TRANS_LOG(INFO,
         "skip restore when replay start working",
         K(restore_snapshot_version_),
-        K(last_restore_log_id_),
+        K(last_restore_log_ts_),
         K(timestamp));
   }
 
@@ -1121,33 +1129,14 @@ void ObPartitionTransCtxMgr::reset_elr_statistic()
   ATOMIC_STORE(&end_trans_by_self_count_, 0);
 }
 
-int ObPartitionTransCtxMgr::iterate_trans_stat(ObTransStatIterator& trans_stat_iter)
+int ObPartitionTransCtxMgr::set_last_restore_log_ts(const int64_t last_restore_log_ts)
 {
   int ret = OB_SUCCESS;
-
-  RLockGuard guard(rwlock_);
-
-  if (IS_NOT_INIT) {
-    TRANS_LOG(WARN, "ObPartitionTransCtxMgr not inited");
-    ret = OB_NOT_INIT;
-  } else {
-    IterateTransStatFunctor fn(trans_stat_iter);
-    if (OB_FAIL(ctx_map_mgr_.foreach_ctx(fn))) {
-      TRANS_LOG(WARN, "for each transaction context error", KR(ret), "manager", *this);
-    }
-  }
-
-  return ret;
-}
-
-int ObPartitionTransCtxMgr::set_last_restore_log_id(const uint64_t last_restore_log_id)
-{
-  int ret = OB_SUCCESS;
-  if (ATOMIC_BCAS(&last_restore_log_id_, OB_INVALID_ID, last_restore_log_id)) {
-    TRANS_LOG(INFO, "set_last_restore_log_id", K(last_restore_log_id), "manager", *this);
-  } else if (last_restore_log_id != ATOMIC_LOAD(&last_restore_log_id_)) {
+  if (ATOMIC_BCAS(&last_restore_log_ts_, OB_INVALID_TIMESTAMP, last_restore_log_ts)) {
+    TRANS_LOG(INFO, "set_last_restore_log_ts", K(last_restore_log_ts), "manager", *this);
+  } else if (last_restore_log_ts != ATOMIC_LOAD(&last_restore_log_ts_)) {
     ret = OB_ERR_UNEXPECTED;
-    TRANS_LOG(WARN, "invalid last_restore_log_id", KR(ret), K(last_restore_log_id), "manager", *this);
+    TRANS_LOG(WARN, "invalid last_restore_log_ts", KR(ret), K(last_restore_log_ts), "manager", *this);
   }
 
   return ret;
@@ -1167,7 +1156,7 @@ int ObPartitionTransCtxMgr::set_restore_snapshot_version(const int64_t restore_s
 }
 
 int ObPartitionTransCtxMgr::update_restore_replay_info(
-    const int64_t restore_snapshot_version, const uint64_t last_restore_log_id)
+    const int64_t restore_snapshot_version, const int64_t last_restore_log_ts)
 {
   int ret = OB_SUCCESS;
   if (OB_FAIL(set_restore_snapshot_version(restore_snapshot_version))) {
@@ -1175,15 +1164,15 @@ int ObPartitionTransCtxMgr::update_restore_replay_info(
         "faile to set_restore_snapshot_version",
         KR(ret),
         K(restore_snapshot_version),
-        K(last_restore_log_id),
+        K(last_restore_log_ts),
         "manager",
         *this);
-  } else if (OB_FAIL(set_last_restore_log_id(last_restore_log_id))) {
+  } else if (OB_FAIL(set_last_restore_log_ts(last_restore_log_ts))) {
     TRANS_LOG(WARN,
-        "faile to set_last_restore_log_id",
+        "faile to set_last_restore_log_ts",
         KR(ret),
         K(restore_snapshot_version),
-        K(last_restore_log_id),
+        K(last_restore_log_ts),
         "manager",
         *this);
   } else {
@@ -1191,7 +1180,7 @@ int ObPartitionTransCtxMgr::update_restore_replay_info(
         "success to update_restore_replay_info",
         KR(ret),
         K(restore_snapshot_version),
-        K(last_restore_log_id),
+        K(last_restore_log_ts),
         "manager",
         *this);
   }
@@ -2885,6 +2874,53 @@ int ObScheTransCtxMgr::get_trans_ctx(const ObPartitionKey& partition, const ObTr
   return ret;
 }
 
+int ObScheTransCtxMgr::get_trans_ctx(const ObPartitionKey& partition, const ObTransID& trans_id, const bool for_replay,
+    const bool is_readonly, bool& alloc, ObTransCtx*& ctx, const bool wait_init)
+{
+  int ret = OB_SUCCESS;
+  const bool is_bounded_staleness_read = false;
+  const bool need_completed_dirty_txn = false;
+
+  DRWLock::RDLockGuard guard(rwlock_);
+
+  if (IS_NOT_INIT) {
+    TRANS_LOG(WARN, "ObScheTransCtxMgr not inited");
+    ret = OB_NOT_INIT;
+  } else if (OB_UNLIKELY(!partition.is_valid() || !trans_id.is_valid())) {
+    TRANS_LOG(WARN, "invalid argument", K(partition), K(trans_id));
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    ObPartitionTransCtxMgr* ctx_mgr = get_partition_trans_ctx_mgr_(partition);
+    if (OB_ISNULL(ctx_mgr)) {
+      TRANS_LOG(WARN, "get partition transaction context mgr error", K(partition));
+      ret = OB_PARTITION_NOT_EXIST;
+    } else if (OB_FAIL(ctx_mgr->get_trans_ctx(trans_id,
+                   for_replay,
+                   is_readonly,
+                   is_bounded_staleness_read,
+                   need_completed_dirty_txn,
+                   alloc,
+                   ctx,
+                   wait_init))) {
+      TRANS_LOG(WARN,
+          "get transaction context error",
+          KR(ret),
+          K(partition),
+          K(trans_id),
+          K(for_replay),
+          K(alloc),
+          K(wait_init));
+    } else if (OB_ISNULL(ctx)) {
+      TRANS_LOG(WARN, "transaction context is null", K(partition), K(trans_id));
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      TRANS_LOG(DEBUG, "get transaction context success", K(partition), K(trans_id));
+    }
+  }
+
+  return ret;
+}
+
 int ObScheTransCtxMgr::revert_trans_ctx(ObTransCtx* ctx)
 {
   int ret = OB_SUCCESS;
@@ -3714,7 +3750,7 @@ int ObPartTransCtxMgr::remove_partition(const ObPartitionKey& partition, const b
                   if (0 == ctx_mgr->get_active_read_write_count() && 0 == ctx_mgr->get_read_only_count()) {
                     if (0 != ctx_mgr->get_ctx_count()) {
                       TRANS_LOG(
-                          ERROR, "maybe some context memory not free, please attention", K(partition), K(*ctx_mgr));
+                          WARN, "maybe some context memory not free, please attention", K(partition), K(*ctx_mgr));
                     }
                     need_retry = false;
                     // OB_SUCCESS is not returned here.
@@ -4139,26 +4175,35 @@ int ObPartTransCtxMgr::check_ctx_create_timestamp_elapsed(const ObPartitionKey& 
   return ret;
 }
 
-int ObPartTransCtxMgr::iterate_trans_stat(const ObPartitionKey& partition, ObTransStatIterator& trans_stat_iter)
+//iterate_trans_stat_without_partition achieves complete transaction information at the server level without partition
+int ObPartTransCtxMgr::iterate_trans_stat_without_partition(ObTransStatIterator& trans_stat_iter)
 {
   int ret = OB_SUCCESS;
-  ObPartitionTransCtxMgr* ctx_mgr = NULL;
+  ObTimeGuard tg("ObPartTransCtxMgr iterate_trans_stat_without_partition", 5000000);
 
   DRWLock::RDLockGuard guard(rwlock_);
 
   if (IS_NOT_INIT) {
     TRANS_LOG(WARN, "ObPartTransCtxMgr not inited");
     ret = OB_NOT_INIT;
-  } else if (OB_UNLIKELY(!partition.is_valid())) {
-    TRANS_LOG(WARN, "invalid argument", K(partition));
-    ret = OB_INVALID_ARGUMENT;
-  } else if (OB_ISNULL(ctx_mgr = get_partition_trans_ctx_mgr(partition))) {
-    TRANS_LOG(WARN, "get partition transaction context manager error", K(partition));
+  } else if (OB_ISNULL(ctx_map_)) {
+    TRANS_LOG(WARN, "get partition transaction context manager error");
     ret = OB_PARTITION_NOT_EXIST;
-  } else if (OB_FAIL(ctx_mgr->iterate_trans_stat(trans_stat_iter))) {
-    TRANS_LOG(WARN, "iterate transaction stat error", KR(ret), K(partition));
   } else {
-    TRANS_LOG(DEBUG, "ObTransStatIterator set ready success", K(partition));
+    //Traverse 64 map memory
+    for (int i=0; i<CONTEXT_MAP_COUNT; i++) {
+      CtxMap *tmp_ctx = ctx_map_ + i;
+      if (OB_NOT_NULL(tmp_ctx)) {
+        IterateTransStatForKeyFunctor fn(trans_stat_iter);
+        if (OB_SUCCESS != (ret = tmp_ctx->for_each(fn))) {
+          TRANS_LOG(WARN, "iterate transaction stat for each error", KR(ret));
+        }
+      }
+    }
+  }
+  if (OB_SUCCESS == ret) {
+    tg.click();
+    TRANS_LOG(DEBUG, "ObTransStatIterator set ready success");
   }
 
   return ret;
@@ -5087,12 +5132,12 @@ int ObPartTransCtxMgr::has_terminated_trx_in_given_log_ts_range(
   return ret;
 }
 
-int ObPartTransCtxMgr::set_last_restore_log_id(const common::ObPartitionKey& pkey, const uint64_t last_restore_log_id)
+int ObPartTransCtxMgr::set_last_restore_log_ts(const common::ObPartitionKey &pkey, const int64_t last_restore_log_ts)
 {
   int ret = OB_SUCCESS;
   ObPartitionTransCtxMgr* ctx_mgr = NULL;
 
-  ObTimeGuard tg("ObPartTransCtxMgr set_last_restore_log_id", 30000);
+  ObTimeGuard tg("ObPartTransCtxMgr set_last_restore_log_ts", 30000);
   DRWLock::RDLockGuard guard(rwlock_);
   tg.click();
   if (IS_NOT_INIT) {
@@ -5104,8 +5149,8 @@ int ObPartTransCtxMgr::set_last_restore_log_id(const common::ObPartitionKey& pke
   } else if (OB_ISNULL(ctx_mgr = get_partition_trans_ctx_mgr(pkey))) {
     TRANS_LOG(WARN, "get partition transaction context manager error", K(pkey));
     ret = OB_PARTITION_NOT_EXIST;
-  } else if (OB_FAIL(ctx_mgr->set_last_restore_log_id(last_restore_log_id))) {
-    TRANS_LOG(WARN, "failed to set_last_restore_log_id", KR(ret), K(pkey), K(last_restore_log_id));
+  } else if (OB_FAIL(ctx_mgr->set_last_restore_log_ts(last_restore_log_ts))) {
+    TRANS_LOG(WARN, "failed to set_last_restore_log_ts", KR(ret), K(pkey), K(last_restore_log_ts));
   } else { /*do nothing*/
   }
   tg.click();
@@ -5119,7 +5164,7 @@ int ObPartTransCtxMgr::set_restore_snapshot_version(
   int ret = OB_SUCCESS;
   ObPartitionTransCtxMgr* ctx_mgr = NULL;
 
-  ObTimeGuard tg("ObPartTransCtxMgr set_last_restore_log_id", 30000);
+  ObTimeGuard tg("ObPartTransCtxMgr set_restore_snapshot_version", 30000);
   DRWLock::RDLockGuard guard(rwlock_);
   tg.click();
   if (OB_UNLIKELY(!is_inited_)) {
@@ -5132,7 +5177,7 @@ int ObPartTransCtxMgr::set_restore_snapshot_version(
     TRANS_LOG(WARN, "get partition transaction context manager error", K(pkey), K(restore_snapshot_version));
     ret = OB_PARTITION_NOT_EXIST;
   } else if (OB_FAIL(ctx_mgr->set_restore_snapshot_version(restore_snapshot_version))) {
-    TRANS_LOG(WARN, "failed to set_last_restore_log_id", KR(ret), K(pkey), K(restore_snapshot_version));
+    TRANS_LOG(WARN, "failed to set_restore_snapshot_version", KR(ret), K(pkey), K(restore_snapshot_version));
   } else { /*do nothing*/
   }
   tg.click();
@@ -5141,12 +5186,12 @@ int ObPartTransCtxMgr::set_restore_snapshot_version(
 }
 
 int ObPartTransCtxMgr::update_restore_replay_info(
-    const common::ObPartitionKey& pkey, const int64_t restore_snapshot_version, const uint64_t last_restore_log_id)
+    const common::ObPartitionKey &pkey, const int64_t restore_snapshot_version, const int64_t last_restore_log_ts)
 {
   int ret = OB_SUCCESS;
   ObPartitionTransCtxMgr* ctx_mgr = NULL;
 
-  ObTimeGuard tg("ObPartTransCtxMgr set_last_restore_log_id", 30000);
+  ObTimeGuard tg("ObPartTransCtxMgr update_restore_replay_info", 30000);
   DRWLock::RDLockGuard guard(rwlock_);
   tg.click();
   if (OB_UNLIKELY(!is_inited_)) {
@@ -5160,15 +5205,15 @@ int ObPartTransCtxMgr::update_restore_replay_info(
         "get partition transaction context manager error",
         K(pkey),
         K(restore_snapshot_version),
-        K(last_restore_log_id));
+        K(last_restore_log_ts));
     ret = OB_PARTITION_NOT_EXIST;
-  } else if (OB_FAIL(ctx_mgr->update_restore_replay_info(restore_snapshot_version, last_restore_log_id))) {
+  } else if (OB_FAIL(ctx_mgr->update_restore_replay_info(restore_snapshot_version, last_restore_log_ts))) {
     TRANS_LOG(WARN,
         "failed to update_restore_replay_info",
         KR(ret),
         K(pkey),
         K(restore_snapshot_version),
-        K(last_restore_log_id));
+        K(last_restore_log_ts));
   } else { /*do nothing*/
   }
   tg.click();

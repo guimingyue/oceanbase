@@ -35,7 +35,8 @@ private:
           extracted_conditions_(),
           saved_order_items_(),
           is_limit_only_(false),
-          need_create_view_(true)
+          need_create_view_(true),
+          need_rename_(false)
     {}
     virtual ~OjLimitPushDownHelper(){};
 
@@ -46,9 +47,10 @@ private:
     ObSEArray<OrderItem, 8> saved_order_items_;
     bool is_limit_only_;
     bool need_create_view_;
+    bool need_rename_;
 
     TO_STRING_KV(K_(select_stmt), K_(target_table), K_(view_table), K_(extracted_conditions), K_(saved_order_items),
-        K_(is_limit_only), K_(need_create_view));
+        K_(is_limit_only), K_(need_create_view), K_(need_rename));
   };
 
 public:
@@ -87,9 +89,6 @@ private:
   int find_target_table(ObSelectStmt* select_stmt, ObSqlBitSet<> table_ids, TableItem*& target_table);
 
   int check_validity_for_target_table(OjLimitPushDownHelper& helper, bool& is_valid);
-
-  int prepare_view_table(ObSelectStmt* stmt, TableItem* target_table, ObIArray<ObRawExpr*>& extracted_conditions,
-      ObIArray<OrderItem>& saved_order_items, TableItem*& view_table);
 
   int pushdown_view_table(ObSelectStmt* stmt, TableItem* target_table, ObIArray<ObRawExpr*>& extracted_conditions,
       ObIArray<OrderItem>& saved_order_items, bool need_rename, bool is_limit_only);

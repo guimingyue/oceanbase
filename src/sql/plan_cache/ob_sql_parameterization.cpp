@@ -257,6 +257,8 @@ bool ObSqlParameterization::is_tree_not_param(const ParseNode* tree)
     ret_bool = true;
   } else if (T_FUN_SYS_UTC_TIMESTAMP == tree->type_) {
     ret_bool = true;
+  } else if (T_FUN_SYS_UTC_TIME == tree->type_) {
+    ret_bool = true;
   } else if (T_FUN_SYS_SYSDATE == tree->type_) {
     ret_bool = true;
   } else if (T_FUN_SYS_SYSTIMESTAMP == tree->type_) {
@@ -269,7 +271,9 @@ bool ObSqlParameterization::is_tree_not_param(const ParseNode* tree)
     ret_bool = true;
   } else if (T_FUN_SYS_CUR_DATE == tree->type_) {
     ret_bool = true;
-  } else if (T_SFU_INT == tree->type_ || T_SFU_DECIMAL == tree->type_) {
+  } else if (T_SFU_INT == tree->type_ ||
+             T_SFU_DECIMAL == tree->type_ ||
+             T_SFU_DOUBLE == tree->type_) {
     ret_bool = true;
   } else if (T_CYCLE_NODE == tree->type_) {
     ret_bool = true;

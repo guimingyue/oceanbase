@@ -320,7 +320,11 @@ int ObCLogMgr::create_partition_(const ObPartitionKey& partition_key, const int6
              OB_FAIL(pls->set_offline())) {
     // physical restore data phase need set clog offline
     STORAGE_LOG(WARN, "fail to set_offline", K(ret), K(partition_key));
-  } else if (archive_restore_state >= share::REPLICA_RESTORE_DATA && OB_FAIL(pls->set_scan_disk_log_finished())) {
+  } else if ((archive_restore_state >= share::REPLICA_RESTORE_DATA
+                 // For two-phase-created non-paxos replica, because it won't execute set_election_leader or
+                 // set_member_list, so it need set_scan_disk_log_finished here.
+                 || !ObReplicaTypeCheck::is_paxos_replica(replica_type)) &&
+             OB_FAIL(pls->set_scan_disk_log_finished())) {
     // partitions created with physical restore flag need skip scan disk log stage, similar with add_partition
     // standby replica will always run here.
     CLOG_LOG(WARN, "set_scan_disk_log_finished failed", K(ret), K(partition_key));
@@ -1275,7 +1279,7 @@ int ObCLogMgr::pre_batch_change_member_(const common::ObPartitionArray& partitio
     } else if (OB_FAIL(member_list_array.push_back(member_list))) {
       CLOG_LOG(WARN, "member_list_array push_back failed", K(ret), K(partition_key), K(member_list));
     } else if (OB_FAIL(proposal_id_array.push_back(proposal_id))) {
-      CLOG_LOG(WARN, "proposal_id_array push_back faield", K(ret), K(partition_key), K(proposal_id_array));
+      CLOG_LOG(WARN, "proposal_id_array push_back failed", K(ret), K(partition_key), K(proposal_id_array));
     } else if (OB_FAIL(ret_map.insert(partition_key, ret))) {
       CLOG_LOG(WARN, "ret_map insert failed", K(ret), K(ret), K(partition_key));
     } else {
@@ -2921,7 +2925,7 @@ int ObCLogMgr::leader_construct_log_info_(const common::ObPartitionArray& partit
                 unused_freeze_version,
                 is_trans_log))) {
           CLOG_LOG(WARN,
-              "log_header genearte_header failed",
+              "log_header generate_header failed",
               K(ret),
               K(log_type),
               K(partition_key),

@@ -55,6 +55,7 @@
 #include "observer/ob_dump_task_generator.h"
 #include "observer/ob_server_schema_updater.h"
 #include "ob_server_event_history_table_operator.h"
+#include "share/ob_alive_server_tracer.h"
 
 namespace oceanbase {
 
@@ -118,6 +119,7 @@ ObService::ObService(const ObGlobalContext& gctx)
       stopped_(false),
       schema_updater_(),
       partition_table_updater_(),
+      partition_location_updater_(),
       index_status_report_queue_(),
       rebuild_flag_report_queue_(),
       pt_checker_(),
@@ -129,7 +131,7 @@ ObService::ObService(const ObGlobalContext& gctx)
 ObService::~ObService()
 {}
 
-int ObService::init(common::ObMySQLProxy& sql_proxy)
+int ObService::init(common::ObMySQLProxy& sql_proxy, share::ObIAliveServerTracer& server_tracer)
 {
   int ret = OB_SUCCESS;
 
@@ -148,6 +150,9 @@ int ObService::init(common::ObMySQLProxy& sql_proxy)
     LOG_ERROR("client_manager_.initialize failed", "self_addr", gctx_.self_addr_, K(ret));
   } else if (OB_FAIL(partition_table_updater_.init())) {
     LOG_WARN("init partition table updater failed", K(ret));
+  } else if (OB_FAIL(partition_location_updater_.init(
+                 *this, GCTX.par_ser_, GCTX.srv_rpc_proxy_, GCTX.location_cache_, server_tracer))) {
+    LOG_WARN("init partition location updater failed", KR(ret));
   } else if (OB_FAIL(checksum_updater_.init())) {
     LOG_WARN("fail to init checksum updater", K(ret));
   } else if (OB_FAIL(ObPGPartitionMTUpdater::get_instance().init())) {
@@ -269,6 +274,7 @@ void ObService::stop()
     stopped_ = true;
     schema_updater_.stop();
     partition_table_updater_.stop();
+    partition_location_updater_.stop();
     checksum_updater_.stop();
     ObPGPartitionMTUpdater::get_instance().stop();
     index_status_report_queue_.stop();
@@ -285,6 +291,7 @@ void ObService::wait()
   } else {
     schema_updater_.wait();
     partition_table_updater_.wait();
+    partition_location_updater_.wait();
     checksum_updater_.wait();
     ObPGPartitionMTUpdater::get_instance().wait();
     index_status_report_queue_.wait();
@@ -915,12 +922,10 @@ int ObService::submit_pt_update_role_task(const ObPartitionKey& pkey)
   return ret;
 }
 
-int ObService::submit_pt_update_task(
-    const ObPartitionKey& part_key, const bool need_report_checksum, const bool with_role)
+int ObService::submit_pt_update_task(const ObPartitionKey& part_key, const bool need_report_checksum)
 {
   int ret = OB_SUCCESS;
   const bool is_remove = false;
-  const int64_t version = 0;
   const ObSSTableChecksumUpdateType update_type = ObSSTableChecksumUpdateType::UPDATE_ALL;
   if (!inited_) {
     ret = OB_NOT_INIT;
@@ -928,14 +933,37 @@ int ObService::submit_pt_update_task(
   } else if (!part_key.is_valid()) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(part_key), K(ret));
-  } else if (OB_FAIL(partition_table_updater_.async_update(part_key, with_role))) {
+  } else if (OB_FAIL(partition_table_updater_.async_update(part_key, false /*with_role*/))) {
     LOG_WARN("async_update failed", K(part_key), K(ret));
-  } else if (need_report_checksum && !part_key.is_pg() &&
-             OB_FAIL(checksum_updater_.add_task(part_key, is_remove, update_type))) {
-    LOG_WARN("fail to async update sstable checksum", K(ret));
-  } else {
-    // do nothing
+  } else if (need_report_checksum) {
+    if (part_key.is_pg()) {
+      ObPartitionArray pkeys;
+      ObIPartitionGroupGuard guard;
+      if (OB_FAIL(gctx_.par_ser_->get_partition(part_key, guard))) {
+        if (OB_PARTITION_NOT_EXIST == ret) {
+          ret = OB_SUCCESS;
+        } else {
+          LOG_WARN("fail to get partition", K(ret), K(part_key));
+        }
+      } else if (OB_ISNULL(guard.get_partition_group())) {
+        ret = OB_ERR_UNEXPECTED;
+        LOG_WARN("error unexpected, partition must not be NULL", K(ret));
+      } else if (OB_FAIL(guard.get_partition_group()->get_all_pg_partition_keys(pkeys))) {
+        LOG_WARN("get pg partition fail", K(ret), K(part_key));
+      } else {
+        for (int64_t i = 0; OB_SUCC(ret) && i < pkeys.count(); ++i) {
+          if (OB_FAIL(checksum_updater_.add_task(pkeys.at(i), is_remove, update_type))) {
+            LOG_WARN("failt to async update sstable checksum", K(ret), K(pkeys.at(i)));
+          }
+        }
+      }
+    } else {
+      if (OB_FAIL(checksum_updater_.add_task(part_key, is_remove, update_type))) {
+        LOG_WARN("fail to async update sstable checksum", K(ret));
+      }
+    }
   }
+
   return ret;
 }
 
@@ -1475,7 +1503,12 @@ int ObService::sync_report_replica_info(
 
 {
   int ret = OB_SUCCESS;
-  if (OB_ISNULL(gctx_.sql_proxy_)) {
+  DEBUG_SYNC(SYNC_REPORT);
+  if (OB_SUCC(ret)) {
+    ret = E(EventTable::EN_PREVENT_SYNC_REPORT) OB_SUCCESS;
+  }
+  if (OB_FAIL(ret)) {
+  } else if (OB_ISNULL(gctx_.sql_proxy_)) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("sql proxy is null", KR(ret));
   } else {
@@ -2023,7 +2056,6 @@ int ObService::report_replica(const obrpc::ObReportSingleReplicaArg& arg)
   int ret = OB_SUCCESS;
   LOG_INFO("receive report replica request", K(arg.partition_key_));
   const bool need_report_checksum = false;
-  const bool with_role_report = true;
   ObPartitionArray pkeys;
   if (!inited_) {
     ret = OB_NOT_INIT;
@@ -2052,8 +2084,10 @@ int ObService::report_replica(const obrpc::ObReportSingleReplicaArg& arg)
     }
   }
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(submit_pt_update_task(arg.partition_key_, need_report_checksum, with_role_report))) {
+    if (OB_FAIL(submit_pt_update_task(arg.partition_key_, need_report_checksum))) {
       LOG_WARN("async_update failed", K(arg.partition_key_), K(ret));
+    } else if (OB_FAIL(submit_pt_update_role_task(arg.partition_key_))) {
+      LOG_WARN("fail to submit pt update role task", K(ret), "pkey", arg.partition_key_);
     }
     // update partition meta table, ignore failed
     submit_pg_pt_update_task(pkeys);
@@ -2876,8 +2910,7 @@ int ObService::report_replica()
             // The partition has been deleted. There is no need to trigger the report
             ret = OB_SUCCESS;
           }
-        } else if (OB_FAIL(submit_pt_update_task(
-                       partition->get_partition_key(), true /*need report checksum*/, true /*with role report*/))) {
+        } else if (OB_FAIL(submit_pt_update_task(partition->get_partition_key(), true /*need report checksum*/))) {
           if (OB_PARTITION_NOT_EXIST == ret) {
             // The GC thread is already working,
             // and deleted during traversal, the replica has been deleted needs to be avoided blocking the start process
@@ -2887,6 +2920,8 @@ int ObService::report_replica()
             LOG_WARN(
                 "submit partition table update task failed", K(ret), "partition_key", partition->get_partition_key());
           }
+        } else if (OB_FAIL(submit_pt_update_role_task(partition->get_partition_key()))) {
+          LOG_WARN("fail to submit pt update role task", K(ret), "pkey", partition->get_partition_key());
         } else {
           // Update partition meta table without concern for error codes
           submit_pg_pt_update_task(pkeys);
@@ -3550,6 +3585,46 @@ int ObService::broadcast_rs_list(const ObRsListArg& arg)
   } else {
     LOG_INFO("observer set master rs success", K(arg));
   }
+  return ret;
+}
+int ObService::submit_broadcast_task(const ObPartitionBroadcastTask& task)
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(!inited_)) {
+    ret = OB_NOT_INIT;
+    LOG_WARN("service do not init", KR(ret), K(task));
+  } else if (!task.is_valid()) {
+    ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("invalid argument", KR(ret), K(task));
+  } else if (OB_FAIL(partition_location_updater_.submit_broadcast_task(task))) {
+    LOG_WARN("submit broadcast task failed", KR(ret), K(task));
+  }
+  return ret;
+}
+
+int ObService::broadcast_locations(const obrpc::ObPartitionBroadcastArg& arg, obrpc::ObPartitionBroadcastResult& result)
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(!inited_)) {
+    ret = OB_NOT_INIT;
+    LOG_WARN("service do not init", KR(ret), K(arg));
+  } else if (!arg.is_valid()) {
+    ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("invalid argument", KR(ret), K(arg));
+  } else {
+    ObPartitionUpdateTask task;
+    for (int64_t i = 0; OB_SUCC(ret) && i < arg.keys_.count(); i++) {
+      const ObPartitionBroadcastTask& key = arg.keys_.at(i);
+      task.reset();
+      if (OB_FAIL(task.init(key.get_table_id(), key.get_partition_id(), key.get_timestamp()))) {
+        LOG_WARN("fail to init task", KR(ret), K(key));
+      } else if (OB_FAIL(partition_location_updater_.submit_update_task(task))) {
+        LOG_WARN("fail to submit update task", KR(ret), K(task));
+      }
+    }
+  }
+  result.ret_ = ret;
+  LOG_DEBUG("receive broadcast locations", KR(ret), K(arg));
   return ret;
 }
 }  // end namespace observer

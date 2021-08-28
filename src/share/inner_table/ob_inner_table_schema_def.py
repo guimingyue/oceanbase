@@ -569,6 +569,8 @@ all_user_def = dict(
       ('priv_alter_system', 'int', 'false', '0'),
       ('priv_create_resource_pool', 'int', 'false', '0'),
       ('priv_create_resource_unit', 'int', 'false', '0'),
+      ('max_connections', 'int', 'false', '0'),
+      ('max_user_connections', 'int', 'false', '0'),
     ],
 
     migrate_data_before_2200 = True,
@@ -4680,6 +4682,7 @@ def_table_schema(
   ('trans_id', 'uint'),
   ('thread_id', 'uint'),
   ('ssl_cipher', 'varchar:OB_MAX_COMMAND_LENGTH', 'true'),
+  ('trace_id', 'varchar:OB_MAX_TRACE_ID_BUFFER_SIZE', 'true', ''),
   ],
   partition_columns = ['svr_ip', 'svr_port'],
 )
@@ -5644,6 +5647,7 @@ def_table_schema(
       ('replica_type', 'int', 'false', '0'),
       ('last_replay_log_id', 'int', 'false', '0'),
       ('schema_version', 'int', 'false', '0'),
+      ('last_replay_log_ts', 'int', 'false', '0'),
   ],
   partition_columns = ['svr_ip', 'svr_port'],
 )
@@ -9971,6 +9975,7 @@ def_table_schema(**gen_oracle_mapping_real_virtual_table_def('15177', True, all_
 def_table_schema(**gen_oracle_mapping_real_virtual_table_def('15179', True, all_def_keywords['__all_res_mgr_consumer_group']))
 
 
+
 ################################################################################
 # System View (20000,30000]
 # MySQL System View (20000, 25000]
@@ -10110,7 +10115,7 @@ def_table_schema(
                    case t.collation_type when 45 then 'utf8mb4' else 'NONE' end AS CHARACTER_SET_CLIENT,
                    case t.collation_type when 45 then 'utf8mb4_general_ci' else 'NONE' end AS COLLATION_CONNECTION
                    from oceanbase.__all_virtual_table as t join oceanbase.__all_virtual_database as d on t.tenant_id = effective_tenant_id() and d.tenant_id = effective_tenant_id() and t.database_id = d.database_id
-                   where (t.table_type = 1 or t.table_type = 4) and d.in_recyclebin = 0 and d.database_name != '__recyclebin' and d.database_name != 'information_schema' and d.database_name != 'oceanbase'
+                   where (t.table_type = 1 or t.table_type = 4) and d.in_recyclebin = 0 and d.database_name != '__recyclebin' and d.database_name != 'information_schema' and d.database_name != 'oceanbase' and 0 = sys_privilege_check('table_acc', effective_tenant_id(), d.database_name, t.table_name)
 """.replace("\n", " "),
 
 
@@ -10153,7 +10158,7 @@ def_table_schema(
                     inner join oceanbase.__all_virtual_database b on a.database_id = b.database_id
                     left join oceanbase.__all_virtual_tenant_partition_meta_table c on a.table_id = c.table_id and c.tenant_id = effective_tenant_id() and a.tenant_id = c.tenant_id and c.role = 1
                     inner join oceanbase.__all_collation d on a.collation_type = d.id
-                    where a.tenant_id = effective_tenant_id() and b.tenant_id = effective_tenant_id() and a.table_type != 5 and b.database_name != '__recyclebin' and b.in_recyclebin = 0
+                    where a.tenant_id = effective_tenant_id() and b.tenant_id = effective_tenant_id() and a.table_type != 5 and b.database_name != '__recyclebin' and b.in_recyclebin = 0 and 0 = sys_privilege_check('table_acc', effective_tenant_id(), b.database_name, a.table_name)
                     group by a.table_id, b.database_name, a.table_name, a.table_type, a.gmt_create, a.gmt_modified, d.collation, a.comment
 """.replace("\n", " "),
 
@@ -10236,7 +10241,7 @@ def_table_schema(
                     inner join oceanbase.__all_virtual_column b on a.table_id = b.table_id
                     inner join oceanbase.__all_virtual_database c on a.database_id = c.database_id
                     where a.tenant_id = effective_tenant_id() and b.tenant_id = effective_tenant_id() and c.tenant_id = effective_tenant_id() and c.in_recyclebin = 0 and c.database_name != '__recyclebin' and b.rowkey_position > 0 and b.column_id >= 16 and a.table_type != 5 and b.column_flags & (0x1 << 8) = 0)
-                    union (select /*+ READ_CONSISTENCY(WEAK) */ 'def' as CONSTRAINT_CATALOG,
+                    union all (select /*+ READ_CONSISTENCY(WEAK) */ 'def' as CONSTRAINT_CATALOG,
                     d.database_name as CONSTRAINT_SCHEMA,
                     substr(a.table_name, 2 + length(substring_index(a.table_name,'_',4))) as CONSTRAINT_NAME,
                     'def' as TABLE_CATALOG,
@@ -10253,7 +10258,31 @@ def_table_schema(
                     inner join oceanbase.__all_virtual_table c on a.data_table_id = c.table_id
                     inner join oceanbase.__all_virtual_database d on c.database_id = d.database_id
                     where a.tenant_id = effective_tenant_id() and b.tenant_id = effective_tenant_id() and c.tenant_id = effective_tenant_id() and d.in_recyclebin = 0 and d.tenant_id = effective_tenant_id() and d.database_name != '__recyclebin' and a.table_type = 5 and a.index_type in (2, 4, 8) and b.index_position > 0)
-""".replace("\n", " "),
+                    union all (select /*+ READ_CONSISTENCY(WEAK) */ 'def' as CONSTRAINT_CATALOG,
+                    d.database_name as CONSTRAINT_SCHEMA,
+                    f.foreign_key_name as CONSTRAINT_NAME,
+                    'def' as TABLE_CATALOG,
+                    d.database_name as TABLE_SCHEMA,
+                    t.table_name as TABLE_NAME,
+                    c.column_name as COLUMN_NAME,
+                    fc.position as ORDINAL_POSITION,
+                    NULL as POSITION_IN_UNIQUE_CONSTRAINT, /* POSITION_IN_UNIQUE_CONSTRAINT is not supported now */
+                    d2.database_name as REFERENCED_TABLE_SCHEMA,
+                    t2.table_name as REFERENCED_TABLE_NAME,
+                    c2.column_name as REFERENCED_COLUMN_NAME
+                    from
+                    oceanbase.__all_virtual_foreign_key f
+                    inner join oceanbase.__all_virtual_table t on f.child_table_id = t.table_id
+                    inner join oceanbase.__all_virtual_database d on t.database_id = d.database_id
+                    inner join oceanbase.__all_virtual_foreign_key_column fc on f.foreign_key_id = fc.foreign_key_id
+                    inner join oceanbase.__all_virtual_column c on fc.child_column_id = c.column_id and t.table_id = c.table_id
+                    inner join oceanbase.__all_virtual_table t2 on f.parent_table_id = t2.table_id
+                    inner join oceanbase.__all_virtual_database d2 on t2.database_id = d2.database_id
+                    inner join oceanbase.__all_virtual_column c2 on fc.parent_column_id = c2.column_id and t2.table_id = c2.table_id
+                    where f.tenant_id = effective_tenant_id() and fc.tenant_id = effective_tenant_id()
+                          and t.tenant_id = effective_tenant_id() and d.tenant_id = effective_tenant_id() and c.tenant_id = effective_tenant_id()
+                          and t2.tenant_id = effective_tenant_id() and d2.tenant_id = effective_tenant_id() and c2.tenant_id = effective_tenant_id())
+                    """.replace("\n", " "),
 
   in_tenant_space = True,
 
@@ -12021,7 +12050,7 @@ def_table_schema(
                     PRIVILEGES,
                     COLUMN_COMMENT,
                     GENERATION_EXPRESSION
-  		    FROM OCEANBASE.__ALL_VIRTUAL_INFORMATION_COLUMNS""",
+  		    FROM OCEANBASE.__ALL_VIRTUAL_INFORMATION_COLUMNS where 0 = sys_privilege_check('table_acc', effective_tenant_id(), table_schema, table_name)""",
   in_tenant_space = True,
   normal_columns = [ ],
 )
@@ -15885,7 +15914,10 @@ SELECT
         'UNDEFINED') as VARCHAR2(128)) as  DATA_TYPE,
   cast(NULL as VARCHAR2(3)) as  DATA_TYPE_MOD,
   cast(NULL as VARCHAR2(128)) as  DATA_TYPE_OWNER,
-  cast(c.data_length as NUMBER) as  DATA_LENGTH,
+  cast(c.data_length * CASE WHEN c.data_type in (22,23,30,43,44,46) and c.data_precision = 1
+                            THEN decode(c.collation_type, 63, 1, 249, 4, 248, 4, 87, 2, 28, 2, 55, 4, 54, 4, 101, 2, 46, 4, 45, 4, 224, 4, 1)
+                            ELSE 1 END
+                            as NUMBER) as DATA_LENGTH,
   cast(CASE WHEN c.data_type in (11,12,17,18,19,22,23,27,28,29,30,36,37,38,43,44)
             THEN NULL
             ELSE CASE WHEN c.data_precision < 0 THEN NULL ELSE c.data_precision END
@@ -15906,19 +15938,24 @@ SELECT
   cast(NULL as NUMBER) as  NUM_BUCKETS,
   cast(NULL as DATE) as  LAST_ANALYZED,
   cast(NULL as NUMBER) as  SAMPLE_SIZE,
-  cast(NULL as VARCHAR2(44)) as  CHARACTER_SET_NAME,
+  cast(decode(c.data_type,
+         22, 'CHAR_CS',
+         23, 'CHAR_CS',
+         30, decode(c.collation_type, 63, 'NULL', 'CHAR_CS'),
+         43, 'NCHAR_CS',
+         44, 'NCHAR_CS',
+         '') as VARCHAR2(44)) as CHARACTER_SET_NAME,
   cast(NULL as NUMBER) as  CHAR_COL_DECL_LENGTH,
   cast(NULL as VARCHAR2(3)) as  GLOBAL_STATS,
   cast(NULL as VARCHAR2(3)) as  USER_STATS,
   cast(NULL as VARCHAR2(80)) as  NOTES,
   cast(NULL as NUMBER) as  AVG_COL_LEN,
-  cast(decode(c.data_type,
-         22, c.data_length,
-         23, c.data_length,
-         0) as NUMBER) as  CHAR_LENGTH,
+  cast(CASE WHEN c.data_type in (22,23,43,44) THEN c.data_length ELSE 0 END as NUMBER) as  CHAR_LENGTH,
   cast(decode(c.data_type,
          22, decode(c.data_precision, 1, 'C', 'B'),
          23, decode(c.data_precision, 1, 'C', 'B'),
+         43, decode(c.data_precision, 1, 'C', 'B'),
+         44, decode(c.data_precision, 1, 'C', 'B'),
          NULL) as VARCHAR2(1)) as  CHAR_USED,
   cast(NULL as VARCHAR2(3)) as  V80_FMT_IMAGE,
   cast(NULL as VARCHAR2(3)) as  DATA_UPGRADED,
@@ -16030,7 +16067,10 @@ SELECT
         'UNDEFINED') as VARCHAR2(128)) as  DATA_TYPE,
   cast(NULL as VARCHAR2(3)) as  DATA_TYPE_MOD,
   cast(NULL as VARCHAR2(128)) as  DATA_TYPE_OWNER,
-  cast(c.data_length as NUMBER) as  DATA_LENGTH,
+  cast(c.data_length * CASE WHEN c.data_type in (22,23,30,43,44,46) and c.data_precision = 1
+                            THEN decode(c.collation_type, 63, 1, 249, 4, 248, 4, 87, 2, 28, 2, 55, 4, 54, 4, 101, 2, 46, 4, 45, 4, 224, 4, 1)
+                            ELSE 1 END
+                            as NUMBER) as  DATA_LENGTH,
   cast(CASE WHEN c.data_type in (11,12,17,18,19,22,23,27,28,29,30,36,37,38,43,44)
             THEN NULL
             ELSE CASE WHEN c.data_precision < 0 THEN NULL ELSE c.data_precision END
@@ -16051,19 +16091,24 @@ SELECT
   cast(NULL as NUMBER) as  NUM_BUCKETS,
   cast(NULL as DATE) as  LAST_ANALYZED,
   cast(NULL as NUMBER) as  SAMPLE_SIZE,
-  cast(NULL as VARCHAR2(44)) as  CHARACTER_SET_NAME,
+  cast(decode(c.data_type,
+         22, 'CHAR_CS',
+         23, 'CHAR_CS',
+         30, decode(c.collation_type, 63, 'NULL', 'CHAR_CS'),
+         43, 'NCHAR_CS',
+         44, 'NCHAR_CS',
+         '') as VARCHAR2(44)) as  CHARACTER_SET_NAME,
   cast(NULL as NUMBER) as  CHAR_COL_DECL_LENGTH,
   cast(NULL as VARCHAR2(3)) as  GLOBAL_STATS,
   cast(NULL as VARCHAR2(3)) as  USER_STATS,
   cast(NULL as VARCHAR2(80)) as  NOTES,
   cast(NULL as NUMBER) as  AVG_COL_LEN,
-  cast(decode(c.data_type,
-         22, c.data_length,
-         23, c.data_length,
-         0) as NUMBER) as  CHAR_LENGTH,
+  cast(CASE WHEN c.data_type in (22,23,43,44) THEN c.data_length ELSE 0 END as NUMBER) as  CHAR_LENGTH,
   cast(decode(c.data_type,
          22, decode(c.data_precision, 1, 'C', 'B'),
          23, decode(c.data_precision, 1, 'C', 'B'),
+         43, decode(c.data_precision, 1, 'C', 'B'),
+         44, decode(c.data_precision, 1, 'C', 'B'),
          NULL) as VARCHAR2(1)) as  CHAR_USED,
   cast(NULL as VARCHAR2(3)) as  V80_FMT_IMAGE,
   cast(NULL as VARCHAR2(3)) as  DATA_UPGRADED,
@@ -16172,7 +16217,10 @@ SELECT
         'UNDEFINED') as VARCHAR2(128)) as  DATA_TYPE,
   cast(NULL as VARCHAR2(3)) as  DATA_TYPE_MOD,
   cast(NULL as VARCHAR2(128)) as  DATA_TYPE_OWNER,
-  cast(c.data_length as NUMBER) as  DATA_LENGTH,
+  cast(c.data_length * CASE WHEN c.data_type in (22,23,30,43,44,46) and c.data_precision = 1
+                            THEN decode(c.collation_type, 63, 1, 249, 4, 248, 4, 87, 2, 28, 2, 55, 4, 54, 4, 101, 2, 46, 4, 45, 4, 224, 4, 1)
+                            ELSE 1 END
+                            as NUMBER) as  DATA_LENGTH,
   cast(CASE WHEN c.data_type in (11,12,17,18,19,22,23,27,28,29,30,36,37,38,43,44)
             THEN NULL
             ELSE CASE WHEN c.data_precision < 0 THEN NULL ELSE c.data_precision END
@@ -16193,19 +16241,24 @@ SELECT
   cast(NULL as NUMBER) as  NUM_BUCKETS,
   cast(NULL as DATE) as  LAST_ANALYZED,
   cast(NULL as NUMBER) as  SAMPLE_SIZE,
-  cast(NULL as VARCHAR2(44)) as  CHARACTER_SET_NAME,
+  cast(decode(c.data_type,
+         22, 'CHAR_CS',
+         23, 'CHAR_CS',
+         30, decode(c.collation_type, 63, 'NULL', 'CHAR_CS'),
+         43, 'NCHAR_CS',
+         44, 'NCHAR_CS',
+         '') as VARCHAR2(44)) as  CHARACTER_SET_NAME,
   cast(NULL as NUMBER) as  CHAR_COL_DECL_LENGTH,
   cast(NULL as VARCHAR2(3)) as  GLOBAL_STATS,
   cast(NULL as VARCHAR2(3)) as  USER_STATS,
   cast(NULL as VARCHAR2(80)) as  NOTES,
   cast(NULL as NUMBER) as  AVG_COL_LEN,
-  cast(decode(c.data_type,
-         22, c.data_length,
-         23, c.data_length,
-         0) as NUMBER) as  CHAR_LENGTH,
+  cast(CASE WHEN c.data_type in (22,23,43,44) THEN c.data_length ELSE 0 END as NUMBER) as  CHAR_LENGTH,
   cast(decode(c.data_type,
          22, decode(c.data_precision, 1, 'C', 'B'),
          23, decode(c.data_precision, 1, 'C', 'B'),
+         43, decode(c.data_precision, 1, 'C', 'B'),
+         44, decode(c.data_precision, 1, 'C', 'B'),
          NULL) as VARCHAR2(1)) as  CHAR_USED,
   cast(NULL as VARCHAR2(3)) as  V80_FMT_IMAGE,
   cast(NULL as VARCHAR2(3)) as  DATA_UPGRADED,

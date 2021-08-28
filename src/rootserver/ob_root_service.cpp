@@ -2269,9 +2269,10 @@ int ObRootService::schedule_inspector_task()
 {
   int ret = OB_SUCCESS;
   int64_t inspect_interval = ObInspector::INSPECT_INTERVAL;
-#ifdef ERRSIM
+#ifdef DEBUG
   inspect_interval = ObServerConfig::get_instance().schema_drop_gc_delay_time;
 #endif
+
   int64_t delay = 1 * 60 * 1000 * 1000;
   int64_t purge_interval = GCONF._recyclebin_object_purge_frequency;
   int64_t expire_time = GCONF.recyclebin_object_expire_time;
@@ -6357,6 +6358,9 @@ int ObRootService::create_outline(const ObCreateOutlineArg& arg)
     const ObDatabaseSchema* db_schema = NULL;
     if (OB_FAIL(ddl_service_.get_tenant_schema_guard_with_version_in_inner_table(tenant_id, schema_guard))) {
       LOG_WARN("get schema guard in inner table failed", K(ret));
+    } else if (database_name == OB_OUTLINE_DEFAULT_DATABASE_NAME) {
+      // if not specify database, set default database name and database id;
+      outline_info.set_database_id(OB_OUTLINE_DEFAULT_DATABASE_ID);
     } else if (OB_FAIL(schema_guard.get_database_schema(tenant_id, database_name, db_schema))) {
       LOG_WARN("get database schema failed", K(ret));
     } else if (NULL == db_schema) {
@@ -6817,10 +6821,6 @@ int ObRootService::stop_server(const obrpc::ObAdminServerArg& arg)
   } else if (!arg.is_valid()) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid arg", K(arg), K(ret));
-  } else if (!config_->enable_auto_leader_switch) {
-    ret = OB_OP_NOT_ALLOW;
-    LOG_WARN("cannot stop server when auto leader switchover disabled", K(ret));
-    LOG_USER_ERROR(OB_OP_NOT_ALLOW, "Stop server when auto leader switchover is disabled");
   } else if (OB_FAIL(get_readwrite_servers(arg.servers_, readwrite_servers))) {
     LOG_WARN("fail to get readwrite servers", K(ret));
   } else if (readwrite_servers.count() <= 0) {
@@ -7099,10 +7099,6 @@ int ObRootService::stop_zone(const obrpc::ObAdminZoneArg& arg)
     } else if (!arg.is_valid()) {
       ret = OB_INVALID_ARGUMENT;
       LOG_WARN("invalid arg", K(arg), K(ret));
-    } else if (!config_->enable_auto_leader_switch) {
-      ret = OB_OP_NOT_ALLOW;
-      LOG_WARN("cannot stop zone when auto leader switchover is disabled", K(ret));
-      LOG_USER_ERROR(OB_OP_NOT_ALLOW, "Stop zone when auto leader switchover is disabled");
     } else if (OB_FAIL(zone_manager_.check_zone_exist(arg.zone_, zone_exist))) {
       LOG_WARN("fail to check zone exist", K(ret));
     } else if (!zone_exist) {
@@ -8346,6 +8342,7 @@ int ObRootService::physical_restore_tenant(const obrpc::ObPhysicalRestoreTenantA
   int64_t current_timestamp = ObTimeUtility::current_time();
   const int64_t RESTORE_TIMESTAMP_DETA = 10 * 1000 * 1000L;  // prevent to recovery to a certain time in the future
   int64_t job_id = OB_INVALID_ID;
+  ObSchemaGetterGuard schema_guard;
   if (!inited_) {
     ret = OB_NOT_INIT;
     LOG_WARN("not init", K(ret));
@@ -8370,6 +8367,9 @@ int ObRootService::physical_restore_tenant(const obrpc::ObPhysicalRestoreTenantA
   } else if (arg.restore_timestamp_ + RESTORE_TIMESTAMP_DETA >= current_timestamp) {
     ret = OB_EAGAIN;
     LOG_WARN("restore_timestamp is too new", K(ret), K(current_timestamp), K(arg));
+  } else if (OB_FAIL(
+                 ddl_service_.get_tenant_schema_guard_with_version_in_inner_table(OB_SYS_TENANT_ID, schema_guard))) {
+    LOG_WARN("fail to get sys tenant's schema guard", KR(ret));
   } else {
     ObMySQLTransaction trans;
     ObPhysicalRestoreJob job_info;
@@ -8383,8 +8383,20 @@ int ObRootService::physical_restore_tenant(const obrpc::ObPhysicalRestoreTenantA
       LOG_WARN("invalid job_id", K(ret), K(job_id));
     } else if (OB_FAIL(ObRestoreUtil::fill_physical_restore_job(job_id, arg, job_info))) {
       LOG_WARN("fail to fill physical restore job", K(ret), K(job_id), K(arg));
-    } else if (FALSE_IT(job_info.restore_start_ts_ = current_timestamp)) {
-    } else if (OB_FAIL(ObRestoreUtil::record_physical_restore_job(trans, job_info))) {
+    } else {
+      job_info.restore_start_ts_ = current_timestamp;
+      // check if tenant exists
+      const ObTenantSchema* tenant_schema = NULL;
+      ObString tenant_name(job_info.tenant_name_);
+      if (OB_FAIL(schema_guard.get_tenant_info(tenant_name, tenant_schema))) {
+        LOG_WARN("fail to get tenant schema", KR(ret), K(job_info));
+      } else if (OB_NOT_NULL(tenant_schema)) {
+        ret = OB_OP_NOT_ALLOW;
+        LOG_WARN("restore tenant with existed tenant name is not allowed", KR(ret), K(tenant_name));
+        LOG_USER_ERROR(OB_OP_NOT_ALLOW, "restore tenant with existed tenant name is");
+      }
+    }
+    if (FAILEDx(ObRestoreUtil::record_physical_restore_job(trans, job_info))) {
       LOG_WARN("fail to record physical restore job", K(ret), K(job_id), K(arg));
     } else {
       restore_scheduler_.wakeup();
@@ -10155,7 +10167,22 @@ int ObRootService::get_tenant_schema_versions(
         ObRefreshSchemaStatus schema_status;
         schema_status.tenant_id_ = GCTX.is_schema_splited() ? tenant_id : OB_INVALID_TENANT_ID;
         int64_t version_in_inner_table = OB_INVALID_VERSION;
-        if (OB_FAIL(schema_service_->get_schema_version_in_inner_table(
+        bool is_restore = false;
+        if (OB_FAIL(schema_service_->check_tenant_is_restore(&schema_guard, tenant_id, is_restore))) {
+          LOG_WARN("fail to check tenant is restore", KR(ret), K(tenant_id));
+        } else if (is_restore) {
+          ObSchemaStatusProxy* schema_status_proxy = GCTX.schema_status_proxy_;
+          if (OB_ISNULL(schema_status_proxy)) {
+            ret = OB_ERR_UNEXPECTED;
+            LOG_WARN("schema_status_proxy is null", KR(ret));
+          } else if (OB_FAIL(schema_status_proxy->get_refresh_schema_status(tenant_id, schema_status))) {
+            LOG_WARN("failed to get tenant refresh schema status", KR(ret), K(tenant_id));
+          } else if (OB_INVALID_VERSION != schema_status.readable_schema_version_) {
+            ret = OB_EAGAIN;
+            LOG_WARN("tenant's sys replicas are not restored yet, try later", KR(ret), K(tenant_id));
+          }
+        }
+        if (FAILEDx(schema_service_->get_schema_version_in_inner_table(
                 sql_proxy_, schema_status, version_in_inner_table))) {
           // failed tenant creation, inner table is empty, return OB_CORE_SCHEMA_VERSION
           if (OB_EMPTY_RESULT == ret) {
@@ -10685,7 +10712,7 @@ int ObRootService::update_table_schema_version(const ObUpdateTableSchemaVersionA
       LOG_WARN("invalid schema service", KR(ret), KP(schema_service));
     } else if (!schema_service->is_in_bootstrap()) {
       ret = OB_OP_NOT_ALLOW;
-      LOG_WARN("not allow to update table schema while not in bootstarp");
+      LOG_WARN("not allow to update table schema while not in bootstrap");
     } else if (OB_FAIL(
                    ddl_service_.get_tenant_schema_guard_with_version_in_inner_table(arg.tenant_id_, schema_guard))) {
       LOG_WARN("get_schema_guard with version in inner table failed", K(ret), K(arg));

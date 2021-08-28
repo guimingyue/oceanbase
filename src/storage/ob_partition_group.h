@@ -135,12 +135,11 @@ public:
       const common::ObIArray<uint64_t>& column_ids, const common::ObIArray<uint64_t>& updated_column_ids,
       const common::ObNewRow& old_row, const common::ObNewRow& new_row) override;
   virtual int lock_rows(const ObStoreCtx& ctx, const ObDMLBaseParam& dml_param, const int64_t abs_lock_timeout,
-      common::ObNewRowIterator* row_iter, ObLockFlag lock_flag, int64_t& affected_rows);
+      common::ObNewRowIterator* row_iter, const ObLockFlag lock_flag, int64_t& affected_rows) override;
   virtual int lock_rows(const ObStoreCtx& ctx, const ObDMLBaseParam& dml_param, const int64_t abs_lock_timeout,
-      const common::ObNewRow& row, ObLockFlag lock_flag);
+      const common::ObNewRow& row, ObLockFlag lock_flag) override;
 
   virtual int get_role(common::ObRole& role) const;
-  virtual int get_role_for_partition_table(common::ObRole& role) const;
   virtual int get_role_unsafe(common::ObRole& role) const;
   virtual int get_leader_curr_member_list(common::ObMemberList& member_list) const;
   virtual int get_leader(common::ObAddr& leader) const;
@@ -344,7 +343,6 @@ public:
   int has_active_memtable(bool& found);
   virtual int enable_write_log(const bool is_replay_old) override;
   virtual uint64_t get_min_replayed_log_id() override;
-  virtual void get_min_replayed_log(uint64_t& min_replay_log_id, int64_t& min_replay_log_ts) override;
   virtual int get_min_replayed_log_with_keepalive(uint64_t& min_replay_log_id, int64_t& min_replay_log_ts) override;
   virtual int check_dirty_txn(
       const int64_t min_log_ts, const int64_t max_log_ts, int64_t& freeze_ts, bool& is_dirty) override;
@@ -392,6 +390,7 @@ public:
   virtual int get_checkpoint_info(common::ObArenaAllocator& allocator, ObPGCheckpointInfo& pg_checkpoint_info) override;
   virtual int acquire_sstable(const ObITable::TableKey& table_key, ObTableHandle& table_handle) override;
   virtual int recycle_unused_sstables(const int64_t max_recycle_cnt, int64_t& recycled_cnt) override;
+  virtual int recycle_sstable(const ObITable::TableKey &table_key) override;
   virtual int check_can_free(bool& can_free) override;
 
   virtual bool need_replay_redo() const;
@@ -422,7 +421,7 @@ public:
 
   int check_can_physical_flashback(const int64_t flashback_scn);
 
-  virtual int clear_trans_after_restore_log(const uint64_t last_restore_log_id);
+  virtual int clear_trans_after_restore_log(const uint64_t last_restore_log_id, const int64_t last_restore_log_ts);
   virtual int reset_for_replay();
 
   virtual int inc_pending_batch_commit_count(memtable::ObMemtableCtx& mt_ctx, const int64_t log_ts);

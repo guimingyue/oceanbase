@@ -178,7 +178,7 @@ OB_SERIALIZE_MEMBER(ObPGPartitionStoreMeta, pkey_, report_status_, multi_version
 OB_SERIALIZE_MEMBER(ObPartitionGroupMeta, pg_key_, is_restore_, replica_type_, replica_property_, saved_split_state_,
     migrate_status_, migrate_timestamp_, storage_info_, split_info_, partitions_, report_status_,
     create_schema_version_, ddl_seq_num_, create_timestamp_, create_frozen_version_, last_restore_log_id_,
-    restore_snapshot_version_);
+    restore_snapshot_version_, last_restore_log_ts_);
 
 ObPartitionGroupMeta::ObPartitionGroupMeta()
 {
@@ -216,6 +216,7 @@ void ObPartitionGroupMeta::reset()
   create_frozen_version_ = 0;
   last_restore_log_id_ = OB_INVALID_ID;
   restore_snapshot_version_ = OB_INVALID_TIMESTAMP;
+  last_restore_log_ts_ = OB_INVALID_TIMESTAMP;
 }
 
 int ObPartitionGroupMeta::deep_copy(const ObPartitionGroupMeta& meta)
@@ -248,6 +249,7 @@ int ObPartitionGroupMeta::deep_copy(const ObPartitionGroupMeta& meta)
     create_frozen_version_ = meta.create_frozen_version_;
     last_restore_log_id_ = meta.last_restore_log_id_;
     restore_snapshot_version_ = meta.restore_snapshot_version_;
+    last_restore_log_ts_ = meta.last_restore_log_ts_;
   }
 
   return ret;
@@ -522,7 +524,8 @@ int ObMigrateStatusHelper::trans_fail_status(const ObMigrateStatus& cur_status, 
         break;
       }
       case OB_MIGRATE_STATUS_RESTORE: {
-        fail_status = OB_MIGRATE_STATUS_RESTORE_FAIL;
+        // allow observer self reentry
+        fail_status = OB_MIGRATE_STATUS_NONE;
         break;
       }
       case OB_MIGRATE_STATUS_COPY_GLOBAL_INDEX: {
@@ -538,11 +541,13 @@ int ObMigrateStatusHelper::trans_fail_status(const ObMigrateStatus& cur_status, 
         break;
       }
       case OB_MIGRATE_STATUS_RESTORE_FOLLOWER: {
-        fail_status = OB_MIGRATE_STATUS_RESTORE_FAIL;
+        // allow observer self reentry
+        fail_status = OB_MIGRATE_STATUS_NONE;
         break;
       }
       case OB_MIGRATE_STATUS_RESTORE_STANDBY: {
-        fail_status = OB_MIGRATE_STATUS_RESTORE_FAIL;
+        // allow observer self reentry
+        fail_status = OB_MIGRATE_STATUS_NONE;
         break;
       }
       case OB_MIGRATE_STATUS_LINK_MAJOR: {
@@ -592,7 +597,10 @@ int ObMigrateStatusHelper::trans_reboot_status(const ObMigrateStatus& cur_status
       }
       case OB_MIGRATE_STATUS_RESTORE:
       case OB_MIGRATE_STATUS_RESTORE_FOLLOWER:
-      case OB_MIGRATE_STATUS_RESTORE_STANDBY:
+      case OB_MIGRATE_STATUS_RESTORE_STANDBY: {
+        reboot_status = OB_MIGRATE_STATUS_NONE;
+        break;
+      }
       case OB_MIGRATE_STATUS_RESTORE_FAIL: {
         reboot_status = OB_MIGRATE_STATUS_RESTORE_FAIL;
         break;
@@ -636,6 +644,7 @@ ObCreatePGParam::ObCreatePGParam()
       file_mgr_(nullptr),
       create_frozen_version_(0),
       last_restore_log_id_(OB_INVALID_ID),
+      last_restore_log_ts_(OB_INVALID_TIMESTAMP),
       restore_snapshot_version_(OB_INVALID_TIMESTAMP),
       migrate_status_(ObMigrateStatus::OB_MIGRATE_STATUS_NONE)
 {}
@@ -655,6 +664,7 @@ void ObCreatePGParam::reset()
   file_mgr_ = nullptr;
   create_frozen_version_ = 0;
   last_restore_log_id_ = OB_INVALID_ID;
+  last_restore_log_ts_ = OB_INVALID_TIMESTAMP;
   restore_snapshot_version_ = OB_INVALID_TIMESTAMP;
   migrate_status_ = ObMigrateStatus::OB_MIGRATE_STATUS_NONE;
 }
@@ -689,6 +699,7 @@ int ObCreatePGParam::assign(const ObCreatePGParam& param)
     file_mgr_ = param.file_mgr_;
     create_frozen_version_ = param.create_frozen_version_;
     last_restore_log_id_ = param.last_restore_log_id_;
+    last_restore_log_ts_ = param.last_restore_log_ts_;
     restore_snapshot_version_ = param.restore_snapshot_version_;
     migrate_status_ = param.migrate_status_;
   }
@@ -874,6 +885,7 @@ int ObCreatePartitionParam::replace_tenant_id(const uint64_t new_tenant_id)
 /**********************ObRecoveryPointSchemaFilter***********************/
 ObRecoveryPointSchemaFilter::ObRecoveryPointSchemaFilter()
     : is_inited_(false),
+      is_restore_point_(false),
       tenant_id_(OB_INVALID_ID),
       tenant_recovery_point_schema_version_(OB_INVALID_VERSION),
       tenant_current_schema_version_(OB_INVALID_VERSION),
@@ -890,7 +902,7 @@ bool ObRecoveryPointSchemaFilter::is_inited() const
   return is_inited_;
 }
 
-int ObRecoveryPointSchemaFilter::init(const int64_t tenant_id, const int64_t tenant_recovery_point_schema_version,
+int ObRecoveryPointSchemaFilter::init(const int64_t tenant_id, const bool is_restore_point, const int64_t tenant_recovery_point_schema_version,
     const int64_t tenant_current_schema_version)
 {
   int ret = OB_SUCCESS;
@@ -920,6 +932,7 @@ int ObRecoveryPointSchemaFilter::init(const int64_t tenant_id, const int64_t ten
                    tenant_id, schema_service, tenant_current_schema_version, current_schema_guard_))) {
       STORAGE_LOG(WARN, "failed to get tenant current schema guard", K(ret), K(tenant_current_schema_version));
     } else {
+      is_restore_point_ = is_restore_point;
       tenant_id_ = tenant_id;
       tenant_recovery_point_schema_version_ = tenant_recovery_point_schema_version;
       tenant_current_schema_version_ = tenant_current_schema_version;
@@ -1040,7 +1053,7 @@ int ObRecoveryPointSchemaFilter::check_table_exist_(
   } else if (OB_FAIL(schema_guard.get_table_schema(table_id, table_schema))) {
     STORAGE_LOG(WARN, "failed to get table schema", K(ret), K(table_id));
   } else if (OB_FAIL(
-                 ObBackupRestoreTableSchemaChecker::check_backup_restore_need_skip_table(table_schema, need_skip))) {
+                 ObBackupRestoreTableSchemaChecker::check_backup_restore_need_skip_table(table_schema, need_skip, is_restore_point_))) {
     LOG_WARN("failed to check backup restore need skip table", K(ret), K(table_id));
   } else if (!need_skip) {
     // do nothing
@@ -1240,7 +1253,7 @@ int ObRecoveryPointSchemaFilter::get_table_ids_in_pg_(const ObPartitionKey& pgke
 
 /***********************ObBackupRestoreTableSchemaChecker***************************/
 int ObBackupRestoreTableSchemaChecker::check_backup_restore_need_skip_table(
-    const share::schema::ObTableSchema* table_schema, bool& need_skip)
+    const share::schema::ObTableSchema* table_schema, bool& need_skip, const bool is_restore_point)
 {
   int ret = OB_SUCCESS;
   ObIndexStatus index_status;
@@ -1254,8 +1267,12 @@ int ObBackupRestoreTableSchemaChecker::check_backup_restore_need_skip_table(
   } else if (table_schema->is_dropped_schema()) {
     STORAGE_LOG(INFO, "table is dropped, skip it", K(table_id));
   } else if (FALSE_IT(index_status = table_schema->get_index_status())) {
-  } else if (table_schema->is_index_table() && ObIndexStatus::INDEX_STATUS_AVAILABLE != index_status) {
-    STORAGE_LOG(INFO, "restore table is not available index, skip it", K(index_status), K(*table_schema));
+  } else if (table_schema->is_index_table()
+             && (is_restore_point ?
+                 !is_final_index_status(index_status, table_schema->is_dropped_schema()) :
+                 ObIndexStatus::INDEX_STATUS_AVAILABLE != index_status)) {
+    STORAGE_LOG(INFO, "restore table index is not expected status, skip it",
+                K(is_restore_point), K(index_status), K(*table_schema));
   } else {
     need_skip = false;
   }

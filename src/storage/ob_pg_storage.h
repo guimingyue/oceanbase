@@ -199,6 +199,7 @@ public:
   int get_all_saved_info(ObSavedStorageInfoV2& info) const;
   int get_saved_clog_info(common::ObBaseStorageInfo& clog_info) const;
   int get_saved_data_info(ObDataStorageInfo& data_info) const;
+  int get_last_replay_log_ts(int64_t &last_replay_log_ts) const;
   int set_pg_storage_info(const ObSavedStorageInfoV2& info);
   int set_pg_clog_info(const ObBaseStorageInfo& clog_info, const bool replica_with_data);
   // build index
@@ -278,8 +279,8 @@ public:
   int add_sstable_for_merge(const ObPartitionKey& pkey, storage::ObSSTable* table,
       const int64_t max_kept_major_version_number, ObSSTable* complement_minor_sstable = nullptr);
   int set_restore_flag(const int16_t restore_flag, const int64_t restore_snapshot_version);
-  int set_last_restore_log_id(const int64_t last_restore_log_id);
-  int get_restore_replay_info(uint64_t& last_restore_log_id, int64_t& restore_snapshot_version);
+  int set_last_restore_log_info(const uint64_t last_restore_log_id, const int64_t last_restore_log_ts);
+  int get_restore_replay_info(uint64_t& last_restore_log_id, int64_t& last_restore_log_ts, int64_t& restore_snapshot_version);
   int set_partition_removed(const ObPartitionKey& pkey);
   int get_all_pg_partition_keys_with_lock(common::ObPartitionArray& pkeys, const bool include_trans_table = false);
   int clear_all_memtables();
@@ -329,6 +330,7 @@ public:
   int replay_remove_sstable(const ObITable::TableKey& table_key);
   int acquire_sstable(const ObITable::TableKey& table_key, ObTableHandle& table_handle);
   int recycle_unused_sstables(const int64_t max_recycle_cnt, int64_t& recycled_cnt);
+  int recycle_sstable(const ObITable::TableKey &table_key);
   int check_can_free(bool& can_free);
 
   int get_min_frozen_memtable_base_version(int64_t& min_base_version);
@@ -588,6 +590,9 @@ private:
   int create_trans_sstable(
       const ObCreatePartitionParam& create_partition_param, const bool in_slog_trans, ObTablesHandle& sstables_handle);
   int prepare_partition_store_map_(const ObPartitionMigrateCtx& ctx, ObPartitionStore::TableStoreMap*& new_store_map);
+  int remove_unneed_table_store_within_trans(
+      const common::ObIArray<ObPartitionMigrateCtx> &part_ctx_array,
+      ObPartitionStore::TableStoreMap **store_maps);
   int do_replace_store_map_(
       const common::ObIArray<ObPartitionMigrateCtx>& part_ctx_array, ObPartitionStore::TableStoreMap** store_maps);
   int get_freeze_info_(const common::ObVersion& version, ObFreezeInfoSnapshotMgr::FreezeInfo& freeze_info);
@@ -604,7 +609,7 @@ private:
   int compat_fill_log_ts(ObArray<ObSSTable*>& replay_tables);
 
   int replay_for_compat_(ObSSTable* sstable, int64_t& fill_log_ts);
-  int get_restore_point_tables_(const int64_t snapshot_version, const int64_t schema_version,
+  int get_restore_point_tables_(const int64_t snapshot_version, const int64_t schema_version, const bool is_restore_point,
       ObPartitionGroupMeta& pg_meta, ObIArray<ObPGPartitionStoreMeta>& partition_metas, ObTablesHandle& handle,
       bool& is_ready, bool& is_need);
   int alloc_meta_(ObPartitionGroupMeta*& meta);

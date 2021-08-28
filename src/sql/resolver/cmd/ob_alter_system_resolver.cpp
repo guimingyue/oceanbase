@@ -1477,6 +1477,9 @@ int check_backup_dest(const ObString& backup_dest)
     LOG_ERROR("cannot set backup dest with old backup data", K(ret), K(backup_dest_buf), K(last_status));
   }
 
+  ret = OB_NOT_SUPPORTED;
+  LOG_USER_ERROR(OB_NOT_SUPPORTED, "please wait backup enhance patch, recently backup ");
+  LOG_ERROR("not support backup now, please wait backup enhance code patch");
   return ret;
 }
 
@@ -1721,6 +1724,10 @@ int ObSetConfigResolver::resolve(const ParseNode& parse_tree)
                 if (OB_FAIL(check_enable_log_archive(item.value_.str()))) {
                   LOG_WARN("cannot set enable log archive true", K(ret));
                 }
+              } else if (0 == STRCMP(item.name_.ptr(), CLUSTER_ID)) {
+                ret = OB_OP_NOT_ALLOW;
+                LOG_WARN("cluster_id is not allowed to modify");
+                LOG_USER_ERROR(OB_OP_NOT_ALLOW, "alter the parameter cluster_id");
               }
             }
           }

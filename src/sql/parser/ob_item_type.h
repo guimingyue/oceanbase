@@ -422,9 +422,12 @@ typedef enum ObItemType {
   T_FUN_SYS_MAKETIME = 707,
   T_FUN_SYS_MONTH_NAME = 708,
   T_FUN_SYS_FORMAT = 709,
-  // T_FUN_SYS_COT = 710, 710 has ben taken on master
+  T_FUN_SYS_COT = 710,
   T_FUN_SYS_QUARTER = 711,
   T_FUN_SYS_BIT_LENGTH = 712,
+  T_FUN_SYS_PI = 713,
+  T_FUN_SYS_EXPORT_SET = 714,
+  
   ///< @note add new mysql only function type before this line
   T_MYSQL_ONLY_SYS_MAX_OP = 800,
 
@@ -560,8 +563,24 @@ typedef enum ObItemType {
   T_FUN_SYS_NLS_UPPER = 1577,
   T_FUN_KEEP_WM_CONCAT = 1578,
   T_FUN_WM_CONCAT = 1579,
+  T_FUN_TOP_FRE_HIST = 1580,
+  T_FUN_UNISTR = 1581,
+  T_FUN_PLSQL_VARIABLE = 1582,
+  T_FUN_ASCIISTR = 1583,
+  T_FUN_PL_AGG_UDF = 1584,
+  T_FUN_SYS_AT_TIME_ZONE = 1585,
+  T_FUN_SYS_AT_LOCAL = 1586,
+  T_FUN_HYBRID_HIST = 1587,
+  T_FUN_SYS_RAWTONHEX = 1588,
+  T_FUN_SYS_TIMESTAMP = 1589,
+  T_FUN_SYS_GET_FORMAT = 1590,
+  T_FUN_SYS_MAKEDATE = 1591,
+  T_FUN_SYS_PERIOD_ADD = 1592,
+  T_FUN_SYS_UTC_TIME = 1593,
+  T_FUN_SYS_UTC_DATE = 1594,
+  T_FUN_SYS_TIME_FORMAT = 1595,
   ///< @note add new oracle only function type before this line
-
+  T_FUN_SYS_CONVERT_TZ = 1596,
   T_FUN_SYS_END = 2000,
 
   T_MAX_OP = 3000,
@@ -1085,6 +1104,7 @@ typedef enum ObItemType {
 
   T_SFU_INT,
   T_SFU_DECIMAL,
+  T_SFU_DOUBLE,
   T_FOR_UPDATE,
   T_DEFAULT_INT,
   T_DEFAULT_NULL,
@@ -1675,6 +1695,11 @@ typedef enum ObItemType {
   T_RANGE_PARTITION_LIST,
   T_LIST_PARTITION_LIST,
 
+  T_USER_RESOURCE_OPTIONS,
+  T_MAX_CONNECTIONS_PER_HOUR,
+  T_MAX_USER_CONNECTIONS,
+  T_MAX_QUERIES_PER_HOUR,
+  T_MAX_UPDATES_PER_HOUR,
   T_MAX  // Attention: add a new type before T_MAX
 } ObItemType;
 

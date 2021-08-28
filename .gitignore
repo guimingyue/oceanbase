@@ -84,3 +84,16 @@ deps/3rd
 compile_commands.json
 test/tmp
 test/var
+*.ccls-cache/
+
+###### Docs website files
+docs/site
+
+###### Intellij files
+.idea
+cmake-build-debug
+cmake-build-release
+*.iml
+
+###### OSX dir files
+.DS_Store

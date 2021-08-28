@@ -681,12 +681,16 @@ int ObLogTableScan::extract_access_exprs(
           expr = static_cast<ObColumnRefRawExpr*>(raw_expr);
         } else if (OB_FAIL(ObRawExprUtils::build_column_expr(opt_ctx->get_expr_factory(), *column_schema, expr))) {
           LOG_WARN("build column expr failed", K(ret));
+        } else if (FALSE_IT(expr->set_table_id(get_table_id()))) {
         } else if (OB_ISNULL(expr)) {
           ret = OB_ERR_UNEXPECTED;
           LOG_WARN("expr is null", K(col_idx), K(ret));
-        } else if (OB_FAIL(expr->formalize(opt_ctx->get_session_info()))) {
-          LOG_WARN("failed to formalize the new expr", K(ret));
-        } else { /*do nothing*/
+        } else {
+          expr->set_ref_id(get_table_id(), column_schema->get_column_id());
+          if (OB_FAIL(expr->formalize(opt_ctx->get_session_info()))) {
+            LOG_WARN("failed to formalize the new expr", K(ret));
+          } else { /*do nothing*/
+          }
         }
         if (OB_SUCC(ret)) {
           if (OB_FAIL(rowkey_exprs.push_back(expr))) {

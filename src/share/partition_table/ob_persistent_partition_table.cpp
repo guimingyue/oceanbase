@@ -483,8 +483,9 @@ int ObPersistentPartitionTable::execute(ObPartitionTableProxy* proxy, const ObPa
             LOG_WARN("data_version must > 0 for leader replica", K(ret), K(replica));
           } else if (replica.to_leader_time_ <= 0) {
             ret = OB_INVALID_ARGUMENT;
-            LOG_WARN("change to leader time must > 0 for leader replica", K(ret), K(replica));
-          } else if (OB_FAIL(GCTX.par_ser_->get_role_for_partition_table(replica.partition_key(), new_role))) {
+            LOG_WARN("change to leader time must > 0 for leader replica",
+                     K(ret), K(replica));
+          } else if (OB_FAIL(GCTX.par_ser_->get_role(replica.partition_key(), new_role))) {
             ret = OB_SUCCESS;
             new_replica.role_ = FOLLOWER;
           } else if (is_follower(new_role)) {
@@ -567,22 +568,12 @@ int ObPersistentPartitionTable::update(const ObPartitionReplica& replica)
 
         if (OB_SUCC(ret)) {
           if (new_replica.is_leader_like()) {
-            if (!new_replica.is_flag_replica()) {
-              if (new_replica.data_version_ <= 0) {
-                ret = OB_INVALID_ARGUMENT;
-                LOG_WARN("data_version must > 0 for leader replica", K(ret), K(new_replica));
-              } else if (new_replica.to_leader_time_ <= 0) {
-                ret = OB_INVALID_ARGUMENT;
-                LOG_WARN("change to leader time must > 0 for leader replica", K(ret), K(new_replica));
-              }
-            } else {
-              // flag replica with only the role of leader, to_leader_time_ and data_version_ are not set
-              // flag is set only by rs,observer shall not set the flag replica
-              // observer will update the partition table asynchronously by invoking
-              // ObPGPartitionMTUpdateOperator::batch_update
-            }
-            if (OB_FAIL(ret)) {
-              // nothing todo
+            if (new_replica.data_version_ <= 0) {
+              ret = OB_INVALID_ARGUMENT;
+              LOG_WARN("data_version must > 0 for leader replica", K(ret), K(new_replica));
+            } else if (new_replica.to_leader_time_ <= 0) {
+              ret = OB_INVALID_ARGUMENT;
+              LOG_WARN("change to leader time must > 0 for leader replica", K(ret), K(new_replica));
             } else if (OB_FAIL(update_leader_replica(*proxy, partition, new_replica))) {
               LOG_WARN("update leader replica failed", K(ret), K(new_replica));
             }

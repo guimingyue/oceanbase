@@ -851,9 +851,9 @@ int ObTransService::do_dist_rollback_(
   bool use_tmp_sche_ctx = false;
   ObScheTransCtx* sche_ctx = NULL;
 
-  if (OB_FAIL(alloc_tmp_sche_ctx_(trans_desc, use_tmp_sche_ctx))) {
+  if (OB_FAIL(acquire_sche_ctx_(trans_desc, sche_ctx, use_tmp_sche_ctx))) {
     TRANS_LOG(WARN, "fail to get tmp scheduler", K(ret), K(trans_desc));
-  } else if (NULL == (sche_ctx = trans_desc.get_sche_ctx())) {
+  } else if (OB_ISNULL(sche_ctx)) {
     ret = OB_ERR_UNEXPECTED;
     TRANS_LOG(ERROR, "scheduler not found", K(ret), K(trans_desc));
   } else if (OB_FAIL(sche_ctx->start_savepoint_rollback(trans_desc, sql_no, rollback_partitions))) {
@@ -867,21 +867,27 @@ int ObTransService::do_dist_rollback_(
     trans_desc.set_need_rollback();
   }
 
-  if (use_tmp_sche_ctx) {
-    free_tmp_sche_ctx_(trans_desc);
-  }
+  release_sche_ctx_(trans_desc, sche_ctx, use_tmp_sche_ctx);
 
   return ret;
 }
 
-int ObTransService::alloc_tmp_sche_ctx_(ObTransDesc& trans_desc, bool& use_tmp_sche_ctx)
+int ObTransService::acquire_sche_ctx_(ObTransDesc& trans_desc,
+                                      ObScheTransCtx*& sche_ctx,
+                                      bool& use_tmp_sche_ctx)
 {
   int ret = OB_SUCCESS;
 
-  if (!trans_desc.is_nested_stmt()) {
-    // only nested stmt need create temp scheduler
-  } else if (NULL == trans_desc.get_sche_ctx()) {
-    const ObTransID& trans_id = trans_desc.get_trans_id();
+  use_tmp_sche_ctx = false;
+
+  if (NULL != (sche_ctx = trans_desc.get_sche_ctx())) {
+    TRANS_LOG(DEBUG, "get saved scheduler success", K(trans_desc));
+  } else if (!trans_desc.is_nested_stmt()) {
+    TRANS_LOG(WARN, "Non-nested statements should not create a temporary scheduler",
+              K(trans_desc));
+  } else {
+    // 构建临时scheduler
+    const ObTransID &trans_id = trans_desc.get_trans_id();
     const bool for_replay = false;
     bool alloc = true;
     const bool is_readonly = false;
@@ -889,9 +895,10 @@ int ObTransService::alloc_tmp_sche_ctx_(ObTransDesc& trans_desc, bool& use_tmp_s
 
     if (OB_FAIL(sche_trans_ctx_mgr_.get_trans_ctx(SCHE_PARTITION_ID, trans_id, for_replay, is_readonly, alloc, ctx))) {
       TRANS_LOG(WARN, "get transaction context error", K(ret), K(trans_id));
+    } else if (FALSE_IT(sche_ctx = static_cast<ObScheTransCtx *>(ctx))) {
+    } else if (!alloc) {
+      TRANS_LOG(DEBUG, "get existed scheduler success", K(SCHE_PARTITION_ID), K(trans_desc));
     } else {
-      ObScheTransCtx* sche_ctx = static_cast<ObScheTransCtx*>(ctx);
-
       if (OB_FAIL(sche_ctx->init(trans_desc.get_tenant_id(),
               trans_id,
               trans_desc.get_trans_expired_time(),
@@ -921,9 +928,11 @@ int ObTransService::alloc_tmp_sche_ctx_(ObTransDesc& trans_desc, bool& use_tmp_s
         }
       }
 
-      if (OB_FAIL(ret) || OB_FAIL(trans_desc.set_sche_ctx(sche_ctx))) {
+      if (OB_FAIL(ret)) {
+        TRANS_LOG(DEBUG, "create temp scheduler failed", K(SCHE_PARTITION_ID), K(trans_desc));
         sche_ctx->set_exiting();
         (void)sche_trans_ctx_mgr_.revert_trans_ctx(sche_ctx);
+        sche_ctx = NULL;
       } else {
         use_tmp_sche_ctx = true;
         TRANS_LOG(DEBUG, "create temp scheduler success", K(SCHE_PARTITION_ID), K(trans_desc));
@@ -934,13 +943,14 @@ int ObTransService::alloc_tmp_sche_ctx_(ObTransDesc& trans_desc, bool& use_tmp_s
   return ret;
 }
 
-void ObTransService::free_tmp_sche_ctx_(ObTransDesc& trans_desc)
+void ObTransService::release_sche_ctx_(ObTransDesc& trans_desc,
+                                       ObScheTransCtx* sche_ctx,
+                                       const bool use_tmp_sche_ctx)
 {
-  ObScheTransCtx* sche_ctx = NULL;
-
-  if (NULL != (sche_ctx = trans_desc.get_sche_ctx())) {
-    trans_desc.set_sche_ctx(NULL);
-    sche_ctx->set_exiting();
+  if (NULL != sche_ctx && trans_desc.get_sche_ctx() != sche_ctx) {
+    if (use_tmp_sche_ctx) {
+      sche_ctx->set_exiting();
+    }
     (void)sche_trans_ctx_mgr_.revert_trans_ctx(sche_ctx);
   }
 }
@@ -1049,6 +1059,9 @@ int ObTransService::end_trans(
     if (is_rollback && OB_TRANS_TIMEOUT == ret) {
       if (OB_UNLIKELY(OB_SUCCESS != (tmp_ret = end_trans_callback_(cb, OB_SUCCESS, tenant_id)))) {
         ret = tmp_ret;
+      } else {
+        // overwrite retcode when rollback timeout
+        ret = OB_SUCCESS;
       }
     } else {
       if (OB_UNLIKELY(OB_SUCCESS != (tmp_ret = end_trans_callback_(cb, ret, tenant_id)))) {
@@ -2411,8 +2424,10 @@ int ObTransService::end_stmt(bool is_rollback, bool is_incomplete, const ObParti
     // or which no need for creating context (has_epoch)
     if (!is_rollback) {
       for (int64_t i = 0; OB_SUCC(ret) && i < cur_stmt_all_participants.count(); i++) {
+        // if participant is pg, merge commit list immediately
         if (is_contain(epoch_participants, cur_stmt_all_participants.at(i)) &&
-            !is_contain(discard_participants, cur_stmt_all_participants.at(i))) {
+            (cur_stmt_all_participants.at(i).is_pg() ||
+                !is_contain(discard_participants, cur_stmt_all_participants.at(i)))) {
           if (OB_FAIL(real_stmt_participants.push_back(cur_stmt_all_participants.at(i)))) {
             TRANS_LOG(WARN, "push back error", KR(ret), K(cur_stmt_all_participants), K(trans_desc));
           }
@@ -2496,14 +2511,17 @@ int ObTransService::end_stmt(bool is_rollback, bool is_incomplete, const ObParti
     TRANS_LOG(WARN, "end statement failed", KR(ret), K(trans_desc), K(is_rollback), K(tmp_rollback));
   }
   if (trans_desc.is_xa_local_trans()) {
-    if (OB_FAIL(xa_release_lock_(trans_desc))) {
-      if (OB_TRANS_XA_BRANCH_FAIL == ret || OB_TRANS_CTX_NOT_EXIST == ret) {
+    if (OB_SUCCESS != (tmp_ret = xa_release_lock_(trans_desc))) {
+      if (OB_TRANS_XA_BRANCH_FAIL == tmp_ret || OB_TRANS_CTX_NOT_EXIST == tmp_ret) {
         trans_desc.get_sche_ctx()->set_terminated();
         need_delete_xa_all_tightly_branch = true;
+        // rewrite ret, branch fail is returned first
         ret = OB_TRANS_XA_BRANCH_FAIL;
         TRANS_LOG(INFO, "original scheduler has terminated", K(ret), K(trans_desc));
       } else {
-        TRANS_LOG(WARN, "xa releasee lock failed", K(ret), K(trans_desc));
+        TRANS_LOG(WARN, "xa releasee lock failed", K(ret), K(tmp_ret), K(trans_desc));
+        // error code of end stmt is returned first
+        ret = (OB_SUCCESS == ret) ? tmp_ret : ret;
       }
     }
   }
@@ -3433,6 +3451,9 @@ int ObTransService::check_partition_status(const ObPartitionKey& partition)
     TRANS_LOG(WARN, "get participant status error", K(ret), K(partition));
   } else if (OB_SUCCESS != clog_status) {
     ret = clog_status;
+    if (REACH_TIME_INTERVAL(ObTransCtx::MAX_TRANS_2PC_TIMEOUT_US)) {
+      (void)refresh_location_cache(partition, false);
+    }
   } else {
     // do nothing
   }
@@ -6723,7 +6744,7 @@ int ObTransService::clear_all_ctx(const common::ObPartitionKey& partition)
   return ret;
 }
 
-int ObTransService::iterate_trans_stat(const common::ObPartitionKey& partition, ObTransStatIterator& trans_stat_iter)
+int ObTransService::iterate_trans_stat_without_partition(ObTransStatIterator& trans_stat_iter)
 {
   int ret = OB_SUCCESS;
   const int64_t PRINT_SCHE_COUNT = 128;
@@ -6734,19 +6755,14 @@ int ObTransService::iterate_trans_stat(const common::ObPartitionKey& partition, 
   } else if (OB_UNLIKELY(!is_running_)) {
     TRANS_LOG(WARN, "ObTransService is not running");
     ret = OB_NOT_RUNNING;
-  } else if (!partition.is_valid()) {
-    TRANS_LOG(WARN, "invalid argument", K(partition));
-    ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(part_trans_ctx_mgr_.iterate_trans_stat(partition, trans_stat_iter))) {
-    TRANS_LOG(WARN, "iterate transaction stat error", KR(ret), K(partition));
-  } else if (OB_FAIL(slave_part_trans_ctx_mgr_.iterate_trans_stat(partition, trans_stat_iter))) {
-    TRANS_LOG(WARN, "iterate slave transaction stat error", KR(ret), K(partition));
-  } else if (OB_FAIL(trans_stat_iter.set_ready())) {
-    TRANS_LOG(WARN, "ObTransStatIterator set ready error", KR(ret), K(partition));
   } else {
-    // do nothing
+    if (OB_FAIL(part_trans_ctx_mgr_.iterate_trans_stat_without_partition(trans_stat_iter))) {
+      TRANS_LOG(WARN, "iterate transaction stat error", KR(ret));
+    }
   }
-  sche_trans_ctx_mgr_.print_all_ctx(PRINT_SCHE_COUNT);
+  if (REACH_TIME_INTERVAL(60 * 1000 * 1000)) {
+    sche_trans_ctx_mgr_.print_all_ctx(PRINT_SCHE_COUNT);
+  }
 
   return ret;
 }
@@ -9394,7 +9410,7 @@ int ObTransService::set_restore_snapshot_version(const ObPartitionKey& pkey, con
   return ret;
 }
 
-int ObTransService::set_last_restore_log_id(const ObPartitionKey& pkey, const uint64_t last_restore_log_id)
+int ObTransService::set_last_restore_log_ts(const ObPartitionKey &pkey, const int64_t last_restore_log_ts)
 {
   int ret = OB_SUCCESS;
 
@@ -9404,8 +9420,8 @@ int ObTransService::set_last_restore_log_id(const ObPartitionKey& pkey, const ui
   } else if (OB_UNLIKELY(!is_running_)) {
     TRANS_LOG(WARN, "ObTransService is not running");
     ret = OB_NOT_RUNNING;
-  } else if (OB_FAIL(part_trans_ctx_mgr_.set_last_restore_log_id(pkey, last_restore_log_id))) {
-    TRANS_LOG(WARN, "set last restore log id error", K(ret), K(pkey), K(last_restore_log_id));
+  } else if (OB_FAIL(part_trans_ctx_mgr_.set_last_restore_log_ts(pkey, last_restore_log_ts))) {
+    TRANS_LOG(WARN, "set last restore log ts error", K(ret), K(pkey), K(last_restore_log_ts));
   } else {
     // do nothing
   }
@@ -9414,7 +9430,7 @@ int ObTransService::set_last_restore_log_id(const ObPartitionKey& pkey, const ui
 }
 
 int ObTransService::update_restore_replay_info(
-    const ObPartitionKey& pkey, const int64_t restore_snapshot_version, const uint64_t last_restore_log_id)
+    const ObPartitionKey &pkey, const int64_t restore_snapshot_version, const int64_t last_restore_log_ts)
 {
   int ret = OB_SUCCESS;
 
@@ -9425,13 +9441,13 @@ int ObTransService::update_restore_replay_info(
     TRANS_LOG(WARN, "ObTransService is not running");
     ret = OB_NOT_RUNNING;
   } else if (OB_FAIL(
-                 part_trans_ctx_mgr_.update_restore_replay_info(pkey, restore_snapshot_version, last_restore_log_id))) {
+                 part_trans_ctx_mgr_.update_restore_replay_info(pkey, restore_snapshot_version, last_restore_log_ts))) {
     TRANS_LOG(WARN,
         "failed to update_restore_replay_info",
         K(ret),
         K(pkey),
         K(restore_snapshot_version),
-        K(last_restore_log_id));
+        K(last_restore_log_ts));
   } else {
     // do nothing
   }
@@ -9537,10 +9553,8 @@ void ObThreadLocalTransCtx::destroy()
   if (memtable_ctx_.get_ctx_descriptor() > 0) {
     if (OB_ISNULL(memtable_ctx_.get_ctx_map())) {
       ret = OB_ERR_UNEXPECTED;
-      TRANS_LOG(ERROR, "unexpected mem ctx", K(ret));
     } else {
       memtable_ctx_.get_ctx_map()->erase(memtable_ctx_.get_ctx_descriptor());
-      TRANS_LOG(INFO, "thread local mem ctx erase id", K(memtable_ctx_.get_ctx_descriptor()));
     }
   }
 }

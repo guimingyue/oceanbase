@@ -265,8 +265,8 @@ int ObTableScan::ObTableScanCtx::init_table_allocator(ObExecContext& ctx)
     lib::ContextParam param;
     param.set_mem_attr(my_session->get_effective_tenant_id(), ObModIds::OB_SQL_EXECUTOR, ObCtxIds::DEFAULT_CTX_ID)
         .set_properties(lib::USE_TL_PAGE_OPTIONAL);
-    MemoryContext* mem_context = nullptr;
-    if (OB_FAIL(CURRENT_CONTEXT.CREATE_CONTEXT(mem_context, param))) {
+    lib::MemoryContext mem_context = nullptr;
+    if (OB_FAIL(CURRENT_CONTEXT->CREATE_CONTEXT(mem_context, param))) {
       LOG_WARN("fail to create entity", K(ret));
     } else if (OB_ISNULL(mem_context)) {
       ret = OB_ERR_UNEXPECTED;
@@ -276,12 +276,12 @@ int ObTableScan::ObTableScanCtx::init_table_allocator(ObExecContext& ctx)
     }
   }
   if (OB_SUCC(ret)) {
-    MemoryContext* mem_context = nullptr;
+    lib::MemoryContext mem_context = nullptr;
     lib::ContextParam param;
     param.set_mem_attr(my_session->get_effective_tenant_id(), ObModIds::OB_TABLE_SCAN_ITER, ObCtxIds::DEFAULT_CTX_ID)
         .set_properties(lib::USE_TL_PAGE_OPTIONAL)
         .set_ablock_size(lib::INTACT_MIDDLE_AOBJECT_SIZE);
-    if (OB_FAIL(CURRENT_CONTEXT.CREATE_CONTEXT(mem_context, param))) {
+    if (OB_FAIL(CURRENT_CONTEXT->CREATE_CONTEXT(mem_context, param))) {
       LOG_WARN("fail to create entity", K(ret));
     } else if (OB_ISNULL(mem_context)) {
       ret = OB_ERR_UNEXPECTED;
@@ -861,6 +861,8 @@ int ObTableScan::inner_close(ObExecContext& ctx) const
     LOG_WARN("fail to get physical plan ctx", K(ret));
   } else if (get_batch_scan_flag() ? NULL == scan_ctx->result_iters_ : NULL == scan_ctx->result_) {
     // this is normal case, so we need NOT set ret or LOG_WARN.
+  } else if (OB_FAIL(ctx.remove_iter(scan_ctx->result_))) {
+    LOG_WARN("fail to remove iter", K(ret));
   } else {
     if (OB_FAIL(fill_storage_feedback_info(ctx))) {
       LOG_WARN("failed to fill storage feedback info", K(ret));
@@ -1605,6 +1607,14 @@ inline int ObTableScan::do_table_scan(ObExecContext& ctx, bool is_rescan, bool n
         }
       } else {
         LOG_DEBUG("table_scan begin", K(scan_ctx->scan_param_), K(*scan_ctx->result_), "op_id", get_id());
+      }
+    }
+    if (OB_SUCC(ret)) {
+      if (OB_ISNULL(scan_ctx->result_)) {
+        ret = OB_ERR_UNEXPECTED;
+        LOG_WARN("result should not be NULL", K(ret), K(scan_ctx->scan_param_));
+      } else if (OB_FAIL(ctx.push_back_iter(scan_ctx->result_))) {
+        LOG_WARN("failed to push back iter", K(ret));
       }
     }
   }

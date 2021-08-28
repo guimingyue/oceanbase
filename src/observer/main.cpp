@@ -13,6 +13,7 @@
 #define USING_LOG_PREFIX SERVER
 
 #include "election/ob_election_async_log.h"
+#include "lib/alloc/malloc_hook.h"
 #include "lib/alloc/ob_malloc_allocator.h"
 #include "lib/allocator/ob_malloc.h"
 #include "lib/file/file_directory_utils.h"
@@ -58,6 +59,7 @@ static void print_help()
 {
   MPRINT("observer [OPTIONS]");
   MPRINT("  -h,--help                print this help");
+  MPRINT("  -V,--version             print the information of version");
   MPRINT("  -z,--zone ZONE           zone");
   MPRINT("  -p,--mysql_port PORT     mysql port");
   MPRINT("  -P,--rpc_port PORT       rpc port");
@@ -359,6 +361,7 @@ static void print_all_limits()
 
 int main(int argc, char* argv[])
 {
+  init_malloc_hook();
   int64_t memory_used = get_virtual_memory_used();
   /**
     signal handler stack
@@ -458,7 +461,7 @@ int main(int argc, char* argv[])
     if (0 == memory_used) {
       _LOG_INFO("Get virtual memory info failed");
     } else {
-      _LOG_INFO("Virtual memory : %ld byte", memory_used);
+      _LOG_INFO("Virtual memory : %'15ld byte", memory_used);
     }
     // print in log file.
     print_args(argc, argv);

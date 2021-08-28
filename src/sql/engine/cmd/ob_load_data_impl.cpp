@@ -727,8 +727,11 @@ int ObLoadDataImpl::take_record_for_failed_rows(ObPhysicalPlanCtx& plan_ctx, ObL
   return ret;
 }
 
-int ObLoadDataBase::memory_wait_local(
-    ObExecContext& ctx, const ObPartitionKey& part_key, ObAddr& server_addr, int64_t& total_wait_secs)
+int ObLoadDataBase::memory_wait_local(ObExecContext &ctx,
+                                      const ObPartitionKey &part_key,
+                                      ObAddr &server_addr,
+                                      int64_t &total_wait_secs,
+                                      bool &is_leader_changed)
 {
   int ret = OB_SUCCESS;
   static const int64_t WAIT_INTERVAL_US = 1 * 1000 * 1000;  // 1s
@@ -811,6 +814,9 @@ int ObLoadDataBase::memory_wait_local(
       if (leader_addr != server_addr) {
         LOG_INFO("LOAD DATA location change", K(part_key), "old_addr", server_addr, "new_addr", leader_addr);
         server_addr = leader_addr;
+        is_leader_changed = true;
+      } else {
+        is_leader_changed = false;
       }
       LOG_INFO("LOAD DATA is resumed", "waited_seconds", wait_secs, K(total_wait_secs));
     }
@@ -1225,7 +1231,7 @@ int ObLoadDataImpl::handle_one_line(ObExecContext& ctx, ObPhysicalPlanCtx& plan_
   return ret;
 }
 
-const char* ObCSVParser::ZERO_STRING = "0";
+const char* ObCSVParser::ZERO_STRING = "\xFF\xFF";
 
 int ObCSVParser::init(
     int64_t file_column_nums, const ObCSVFormats& formats, const common::ObBitSet<>& string_type_column)
@@ -1258,33 +1264,35 @@ int ObCSVParser::next_line(bool& yield_line)
   bool yield = false;
   int with_back_slash = 0;
 
-  for (; !yield && cur_pos_ != buf_end_pos_; ++cur_pos_) {
-
+  for (; !yield && cur_pos_ != buf_end_pos_; ++cur_pos_, ++cur_field_end_pos_) {
+    bool line_term_matched = false;
     if (*cur_pos_ == formats_.enclose_char_ && !in_enclose_flag_ && cur_pos_ == cur_field_begin_pos_) {
       in_enclose_flag_ = true;
-    }
-
-    if (!is_escaped_flag_ && *cur_pos_ == formats_.escape_char_) {
-      is_escaped_flag_ = true;
+      last_end_enclosed_ = NULL;
+    } else if ((*cur_pos_ == formats_.escape_char_ && formats_.escape_char_ != formats_.enclose_char_) ||
+               (in_enclose_flag_ && formats_.enclose_char_ == *cur_pos_ && cur_pos_ < buf_end_pos_ &&
+                   formats_.enclose_char_ == *(cur_pos_ + 1))) {
+      if (cur_pos_ < buf_end_pos_) {
+        cur_pos_++;
+        if (!is_fast_parse_) {
+          *cur_field_end_pos_ = escaped_char(*cur_pos_, &with_back_slash);
+        }
+      }
     } else {
-      char escaped_res = *cur_pos_;
-      if (is_escaped_flag_) {
-        escaped_res = escaped_char(*cur_pos_, &with_back_slash);
-      }
       if (cur_field_end_pos_ != cur_pos_ && !is_fast_parse_) {
-        *cur_field_end_pos_ = escaped_res;
+        *cur_field_end_pos_ = *cur_pos_;
       }
-
-      bool line_term_matched = false;
-
-      if (is_terminate_char(*cur_pos_, cur_field_end_pos_, line_term_matched)) {
+      if (formats_.enclose_char_ == *cur_pos_) {
+        last_end_enclosed_ = cur_field_end_pos_;
+      } else if (is_terminate_char(*cur_pos_, cur_field_end_pos_, line_term_matched)) {
         if (!line_term_matched || cur_field_begin_pos_ < cur_pos_) {
-          handle_one_field(cur_field_end_pos_);
+          handle_one_field(cur_field_end_pos_, cur_field_end_pos_ != cur_pos_);
           field_id_++;
         }
         char* next_pos = cur_pos_ + 1;
         cur_field_begin_pos_ = next_pos;
         cur_field_end_pos_ = cur_pos_;
+        in_enclose_flag_ = false;
         if (line_term_matched && (!formats_.is_line_term_by_counting_field_ || field_id_ == total_field_nums_)) {
           if (OB_UNLIKELY(field_id_ != total_field_nums_)) {
             ret = deal_with_irregular_line();
@@ -1295,19 +1303,14 @@ int ObCSVParser::next_line(bool& yield_line)
           cur_line_begin_pos_ = next_pos;
         }
       }
-
-      if (is_escaped_flag_) {
-        is_escaped_flag_ = false;
-      }
-
-      ++cur_field_end_pos_;
     }
   }
 
   if (!yield && is_last_buf_ && cur_pos_ == buf_end_pos_) {
     if (cur_field_begin_pos_ < cur_pos_) {
       // new field, terminated with an eof
-      handle_one_field(cur_field_end_pos_);
+      bool has_escaped = cur_field_end_pos_ != cur_pos_;
+      handle_one_field(cur_field_end_pos_, has_escaped);
       field_id_++;
     }
     cur_field_begin_pos_ = cur_pos_;
@@ -1349,7 +1352,7 @@ void ObCSVParser::deal_with_empty_field(ObString& field_str, int64_t index)
 {
   if (formats_.null_column_fill_zero_string_ && !string_type_column_.has_member(index)) {
     // a non-string value will be set to "0", "0" will be cast to zero value of target types
-    field_str.assign_ptr(ZERO_STRING, 1);
+    field_str.assign_ptr(ZERO_STRING, 2);
   } else {
     // a string value will be set to ''
     field_str.reset();
@@ -2825,6 +2828,8 @@ int ObLoadDataSPImpl::exec_insert(ObInsertTask& task, ObInsertResult& result)
         }
         if (ObLoadDataUtils::is_null_field(single_row_values[c])) {
           OZ(sql_str.append(ObString(ObLoadDataUtils::NULL_STRING)));
+        } else if (ObLoadDataUtils::is_zero_field(single_row_values[c])) {
+          OZ(sql_str.append("0"));
         } else {
           if (is_string_column) {
             OZ(sql_str.append("'", 1));
@@ -3180,12 +3185,22 @@ int ObLoadDataSPImpl::handle_returned_insert_task(
     ObAddr& addr = part_mgr->get_leader_addr();
     bool found = (OB_SUCCESS == box.server_last_available_ts.get(addr, last_ts));
     if (insert_task.result_recv_ts_ > last_ts) {
-      if (OB_FAIL(memory_wait_local(ctx, part_mgr->get_part_key(), addr, box.wait_secs_for_mem_release))) {
+      bool is_leader_changed = false;
+      if (OB_FAIL(memory_wait_local(ctx, part_mgr->get_part_key(),
+                                    addr, box.wait_secs_for_mem_release,
+                                    is_leader_changed))) {
         LOG_WARN("fail to memory_wait_local", K(ret));
       } else {
         int64_t curr_time = ObTimeUtil::current_time();
+        if (is_leader_changed) {
+          found = (OB_SUCCESS == box.server_last_available_ts.get(addr, last_ts));
+        }
         ret = found ? box.server_last_available_ts.update(addr, curr_time)
                     : box.server_last_available_ts.insert(addr, curr_time);
+        if (OB_FAIL(ret)) {
+          LOG_WARN("failt to update server_last_available_ts",
+                   K(ret), K(addr), K(found), K(is_leader_changed));
+        }
       }
     }
   }
@@ -3214,45 +3229,41 @@ int ObLoadDataSPImpl::handle_returned_insert_task(
 
   if (OB_SUCC(ret)) {
     switch (task_status) {
-      case TASK_SUCC:
-        box.affected_rows += insert_task.row_count_;
-        box.insert_rt_sum += insert_task.process_us_;
-        /* RESERVE FOR DEBUG
-        box.handle_returned_insert_task_count++;
-        if (insert_task.row_count_ != DEFAULT_BUFFERRED_ROW_COUNT) {
-          LOG_WARN("LOAD DATA task return",
-                   "task_id", insert_task.task_id_,
-                   "affected_rows", box.affected_rows,
-                   "row_count", insert_task.row_count_);
-        }
-        */
-        break;
-      case TASK_NEED_RETRY:
-        insert_task.retry_times_++;
-        need_retry = true;
-        LOG_WARN("LOAD DATA task need retry",
-            "task_id",
-            insert_task.task_id_,
-            "ret",
-            result.exec_ret_,
-            "row_count",
-            insert_task.row_count_);
-        break;
-      case TASK_FAILED:
-        if (OB_SUCCESS != log_failed_insert_task(box, insert_task)) {
-          LOG_WARN("fail to log failed insert task");
-        }
-        LOG_WARN("LOAD DATA task failed",
-            "task_id",
-            insert_task.task_id_,
-            "ret",
-            result.exec_ret_,
-            "row_count",
-            insert_task.row_count_);
-        break;
-      default:
-        ret = OB_ERR_UNEXPECTED;
-        break;
+    case TASK_SUCC:
+      box.affected_rows += insert_task.row_count_;
+      box.insert_rt_sum += insert_task.process_us_;
+      /* RESERVE FOR DEBUG
+      box.handle_returned_insert_task_count++;
+      if (insert_task.row_count_ != DEFAULT_BUFFERRED_ROW_COUNT) {
+        LOG_WARN("LOAD DATA task return",
+                 "task_id", insert_task.task_id_,
+                 "affected_rows", box.affected_rows,
+                 "row_count", insert_task.row_count_);
+      }
+      */
+      break;
+    case TASK_NEED_RETRY:
+      insert_task.retry_times_++;
+      need_retry = true;
+      LOG_WARN("LOAD DATA task need retry",
+               "execute server", server_info->addr,
+               "task_id", insert_task.task_id_,
+               "ret", result.exec_ret_,
+               "row_count", insert_task.row_count_);
+      break;
+    case TASK_FAILED:
+      if (OB_SUCCESS != log_failed_insert_task(box, insert_task)) {
+        LOG_WARN("fail to log failed insert task");
+      }
+      LOG_WARN("LOAD DATA task failed",
+               "execute server", server_info->addr,
+               "task_id", insert_task.task_id_,
+               "ret", result.exec_ret_,
+               "row_count", insert_task.row_count_);
+      break;
+    default:
+      ret = OB_ERR_UNEXPECTED;
+      break;
     }
   }
 
@@ -3429,6 +3440,10 @@ int ObLoadDataSPImpl::insert_task_gen_and_dispatch(ObExecContext& ctx, ToolBox& 
       LOG_WARN("fail to on task finish", K(ret));
     } else if (OB_FAIL(box.insert_task_reserve_queue.push_back(insert_task))) {
       LOG_WARN("fail to push back", K(ret));
+    } else if (OB_ISNULL(insert_task)) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      insert_task->reuse();
     }
   }
 
@@ -4136,11 +4151,11 @@ int ObLoadDataSPImpl::ToolBox::init(ObExecContext& ctx, ObLoadDataStmt& load_stm
   if (OB_SUCC(ret)) {
     if (OB_FAIL(shuffle_task_controller.init(parallel))) {
       LOG_WARN("fail to init shuffle task controller", K(ret));
-    } else if (OB_FAIL(shuffle_task_reserve_queue.init(parallel))) {
+    } else if (OB_FAIL(shuffle_task_reserve_queue.init(parallel + 1))) {
       LOG_WARN("fail to init shuffle_task_reserve_queue", K(ret));
     } else if (OB_FAIL(insert_task_controller.init(parallel * server_infos.count()))) {
       LOG_WARN("fail to init insert task controller", K(ret));
-    } else if (OB_FAIL(insert_task_reserve_queue.init(parallel * server_infos.count()))) {
+    } else if (OB_FAIL(insert_task_reserve_queue.init(parallel * server_infos.count() + 1))) {
       LOG_WARN("fail to init insert_task_reserve_queue", K(ret));
     } else if (OB_FAIL(ctx_allocators.reserve(parallel))) {
       LOG_WARN("fail to pre alloc allocators", K(ret));

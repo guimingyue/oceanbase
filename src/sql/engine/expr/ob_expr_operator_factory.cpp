@@ -105,6 +105,7 @@
 #include "sql/engine/expr/ob_expr_sinh.h"
 #include "sql/engine/expr/ob_expr_cosh.h"
 #include "sql/engine/expr/ob_expr_tanh.h"
+#include "sql/engine/expr/ob_expr_cot.h"
 #include "sql/engine/expr/ob_expr_trim.h"
 #include "sql/engine/expr/ob_expr_inner_trim.h"
 #include "sql/engine/expr/ob_expr_unhex.h"
@@ -121,6 +122,7 @@
 #include "sql/engine/expr/ob_expr_period_diff.h"
 #include "sql/engine/expr/ob_expr_unix_timestamp.h"
 #include "sql/engine/expr/ob_expr_maketime.h"
+#include "sql/engine/expr/ob_expr_makedate.h"
 #include "sql/engine/expr/ob_expr_extract.h"
 #include "sql/engine/expr/ob_expr_to_days.h"
 #include "sql/engine/expr/ob_expr_day_of_func.h"
@@ -141,6 +143,7 @@
 #include "sql/engine/expr/ob_expr_merging_frozen_time.h"
 #include "sql/engine/expr/ob_expr_remainder.h"
 #include "sql/engine/expr/ob_expr_repeat.h"
+#include "sql/engine/expr/ob_expr_export_set.h"
 #include "sql/engine/expr/ob_expr_replace.h"
 #include "sql/engine/expr/ob_expr_translate.h"
 #include "sql/engine/expr/ob_expr_func_part_hash.h"
@@ -205,6 +208,7 @@
 #include "sql/engine/expr/ob_expr_sys_connect_by_path.h"
 #include "sql/engine/expr/ob_expr_sys_op_opnsize.h"
 #include "sql/engine/expr/ob_expr_shadow_uk_project.h"
+#include "sql/engine/expr/ob_expr_time_format.h"
 #include "sql/engine/expr/ob_expr_interval.h"
 #include "sql/engine/expr/ob_expr_week_of_func.h"
 #include "sql/engine/expr/ob_expr_userenv.h"
@@ -256,10 +260,12 @@
 #include "sql/engine/expr/ob_expr_user_can_access_obj.h"
 #include "sql/engine/expr/ob_expr_empty_lob.h"
 #include "sql/engine/expr/ob_expr_radians.h"
+#include "sql/engine/expr/ob_expr_pi.h"
 #include "sql/engine/expr/ob_expr_to_outfile_row.h"
 #include "sql/engine/expr/ob_expr_format.h"
 #include "sql/engine/expr/ob_expr_quarter.h"
 #include "sql/engine/expr/ob_expr_bit_length.h"
+#include "sql/engine/expr/ob_expr_convert_tz.h"
 
 using namespace oceanbase::common;
 namespace oceanbase {
@@ -504,19 +510,24 @@ void ObExprOperatorFactory::register_expr_operators()
   REG_OP(ObExprTimeStampDiff);
   REG_OP(ObExprTimeDiff);
   REG_OP(ObExprPeriodDiff);
+  REG_OP(ObExprPeriodAdd);
   REG_OP(ObExprUnixTimestamp);
   REG_OP(ObExprMakeTime);
+  REG_OP(ObExprMakedate);
   REG_OP(ObExprExtract);
   REG_OP(ObExprToDays);
   REG_OP(ObExprPosition);
   REG_OP(ObExprFromDays);
   REG_OP(ObExprDateFormat);
+  REG_OP(ObExprGetFormat);
   REG_OP(ObExprStrToDate);
   REG_OP(ObExprCurDate);
   REG_OP(ObExprCurTime);
   REG_OP(ObExprSysdate);
   REG_OP(ObExprCurTimestamp);
   REG_OP(ObExprUtcTimestamp);
+  REG_OP(ObExprUtcTime);
+  REG_OP(ObExprUtcDate);
   REG_OP(ObExprTimeToUsec);
   REG_OP(ObExprUsecToTime);
   REG_OP(ObExprMergingFrozenTime);
@@ -526,6 +537,7 @@ void ObExprOperatorFactory::register_expr_operators()
   REG_OP(ObExprFuncCeiling);
   REG_OP(ObExprFuncDump);
   REG_OP(ObExprRepeat);
+  REG_OP(ObExprExportSet);
   REG_OP(ObExprReplace);
   REG_OP(ObExprFuncPartOldHash);
   REG_OP(ObExprFuncPartHash);
@@ -545,6 +557,7 @@ void ObExprOperatorFactory::register_expr_operators()
   REG_OP(ObExprCharset);
   REG_OP(ObExprCollation);
   REG_OP(ObExprCoercibility);
+  REG_OP(ObExprConvertTZ);
   REG_OP(ObExprSetCollation);
   REG_OP(ObExprReverse);
   REG_OP(ObExprRight);
@@ -637,6 +650,10 @@ void ObExprOperatorFactory::register_expr_operators()
   REG_OP(ObExprBool);
   REG_OP(ObExprSin);
   REG_OP(ObExprTan);
+  REG_OP(ObExprCos);
+  REG_OP(ObExprCot);
+  REG_OP(ObExprAsin);
+  REG_OP(ObExprAcos);
   REG_OP(ObExprCalcPartitionId);
   REG_OP(ObExprPartIdPseudoColumn);
   REG_OP(ObExprStmtId);
@@ -645,6 +662,11 @@ void ObExprOperatorFactory::register_expr_operators()
   REG_OP(ObExprAtan2);
   REG_OP(ObExprToOutfileRow);
   REG_OP(ObExprFormat);
+  REG_OP(ObExprLog);
+  REG_OP(ObExprPi);
+  REG_OP(ObExprLastDay);
+  REG_OP(ObExprTimeFormat);
+  REG_OP(ObExprTimestamp);
   // register oracle system function
   REG_OP_ORCL(ObExprSysConnectByPath);
   REG_OP_ORCL(ObExprTimestampNvl);
@@ -876,6 +898,7 @@ void ObExprOperatorFactory::register_expr_operators()
   REG_OP_ORCL(ObExprCharset);
   REG_OP_ORCL(ObExprCollation);
   REG_OP_ORCL(ObExprCoercibility);
+  REG_OP_ORCL(ObExprLastTraceId);
 }
 
 bool ObExprOperatorFactory::is_expr_op_type_valid(ObExprOperatorType type)

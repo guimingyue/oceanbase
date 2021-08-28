@@ -195,6 +195,7 @@ ob_set_subtarget(ob_sql engine
   engine/expr/ob_expr_tan.cpp
   engine/expr/ob_expr_atan.cpp
   engine/expr/ob_expr_atan2.cpp
+  engine/expr/ob_expr_cot.cpp
   engine/expr/ob_expr_between.cpp
   engine/expr/ob_expr_bit_and.cpp
   engine/expr/ob_expr_bit_count.cpp
@@ -306,6 +307,7 @@ ob_set_subtarget(ob_sql engine
   engine/expr/ob_expr_neg.cpp
   engine/expr/ob_expr_autoinc_nextval.cpp
   engine/expr/ob_expr_not.cpp
+  engine/expr/ob_expr_convert_tz.cpp
   engine/expr/ob_expr_not_between.cpp
   engine/expr/ob_expr_not_equal.cpp
   engine/expr/ob_expr_not_exists.cpp
@@ -345,7 +347,10 @@ ob_set_subtarget(ob_sql engine
   engine/expr/ob_expr_regexp_like.cpp
   engine/expr/ob_expr_repeat.cpp
   engine/expr/ob_expr_replace.cpp
+  engine/expr/ob_expr_export_set.cpp
   engine/expr/ob_expr_translate.cpp
+  engine/expr/ob_expr_pi.cpp
+  engine/expr/ob_expr_pi.h
   engine/expr/ob_expr_radians.cpp
   engine/expr/ob_expr_res_type_map.cpp
   engine/expr/ob_expr_result_type_util.cpp
@@ -383,6 +388,9 @@ ob_set_subtarget(ob_sql engine
   engine/expr/ob_expr_tanh.cpp
   engine/expr/ob_expr_time.cpp
   engine/expr/ob_expr_time_diff.cpp
+  engine/expr/ob_expr_time_diff.h
+  engine/expr/ob_expr_time_format.cpp
+  engine/expr/ob_expr_time_format.h
   engine/expr/ob_expr_time_to_usec.cpp
   engine/expr/ob_expr_timestamp.cpp
   engine/expr/ob_expr_timestamp_add.cpp
@@ -436,6 +444,9 @@ ob_set_subtarget(ob_sql engine
   engine/expr/ob_expr_bool.cpp
   engine/expr/ob_expr_eval_functions.cpp
   engine/expr/ob_expr_maketime.cpp
+  engine/expr/ob_expr_makedate.h
+  engine/expr/ob_expr_makedate.cpp
+  engine/join/ob_join_op.h
   engine/join/ob_join_op.cpp
   engine/join/ob_basic_nested_loop_join_op.cpp
   engine/join/ob_nested_loop_join_op.cpp
@@ -1022,6 +1033,7 @@ ob_set_subtarget(ob_sql session
   session/ob_sql_session_info.cpp
   session/ob_sql_session_mgr.cpp
   session/ob_sys_params_mgr.cpp
+  session/ob_user_resource_mgr.cpp
 )
 
 ob_server_add_pchs(sql

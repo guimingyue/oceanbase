@@ -10,6 +10,7 @@
  * See the Mulan PubL v2 for more details.
  */
 
+#include <cstdio>
 #include "lib/utility/ob_print_utils.h"
 #include "lib/alloc/malloc_hook.h"
 #include "share/ob_tenant_mgr.h"
@@ -26,20 +27,13 @@
 int64_t get_virtual_memory_used()
 {
   constexpr int BUFFER_SIZE = 128;
-  char buf[BUFFER_SIZE];
-  snprintf(buf, BUFFER_SIZE, "/proc/%d/status", getpid());
-  std::ifstream status(buf);
-  int64_t used = 0;
-  while (status && 0 == used) {
-    status >> buf;
-    if (strncmp(buf, "VmSize:", BUFFER_SIZE) == 0) {
-      status >> buf;
-      used = std::stoi(buf);
-    } else {
-      status.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    }
-  }
-  return used * 1024;
+  char filename[BUFFER_SIZE];
+  int64_t page_cnt = 0;
+  snprintf(filename, BUFFER_SIZE, "/proc/%d/statm", getpid());
+  FILE* statm = fopen(filename, "r");
+  fscanf(statm, "%ld", &page_cnt);
+  fclose(statm);
+  return page_cnt * sysconf(_SC_PAGESIZE);
 }
 
 namespace oceanbase {
@@ -199,32 +193,11 @@ using namespace oceanbase::storage;
 
 void get_tenant_ids(uint64_t* ids, int cap, int& cnt)
 {
-  int ret = OB_SUCCESS;
+  auto *instance = ObMallocAllocator::get_instance();
   cnt = 0;
-  omt::ObMultiTenant* omt = GCTX.omt_;
-  if (OB_ISNULL(omt)) {
-    if (ObTenantManager::get_instance().is_inited()) {
-      common::ObArray<uint64_t> tmp_ids;
-      if (OB_FAIL(ObTenantManager::get_instance().get_all_tenant_id(tmp_ids))) {
-        SERVER_LOG(WARN, "get tenant id error", K(ret));
-      } else {
-        for (auto it = tmp_ids.begin(); OB_SUCC(ret) && it != tmp_ids.end() && cnt < cap; it++) {
-          ids[cnt++] = *it;
-        }
-      }
-    } else {
-      if (cnt < cap) {
-        ids[cnt++] = OB_SYS_TENANT_ID;
-      }
-      if (cnt < cap) {
-        ids[cnt++] = OB_SERVER_TENANT_ID;
-      }
-    }
-  } else {
-    omt::TenantIdList tmp_ids(nullptr, ObModIds::OMT);
-    omt->get_tenant_ids(tmp_ids);
-    for (auto it = tmp_ids.begin(); OB_SUCC(ret) && it != tmp_ids.end() && cnt < cap; it++) {
-      ids[cnt++] = *it;
+  for (uint64_t tenant_id = 1; tenant_id <= ObMallocAllocator::get_max_used_tenant_id() && cnt < cap; ++tenant_id) {
+    if (nullptr != instance->get_tenant_ctx_allocator(tenant_id, 0)) {
+      ids[cnt++] = tenant_id;
     }
   }
 }
@@ -1475,6 +1448,7 @@ int ObTenantManager::check_and_do_freeze_mixed()
     uint64_t major_tenant_id = OB_INVALID_TENANT_ID;
     int64_t curr_frozen_version = 0;
     int64_t frozen_version = 0;
+    bool use_too_much_memory = false;
 
     if (OB_UNLIKELY(OB_SUCCESS != (tmp_ret = get_global_frozen_version(frozen_version)))) {
       COMMON_LOG(WARN, "fail to get global frozen version", K(tmp_ret));
@@ -1502,8 +1476,11 @@ int ObTenantManager::check_and_do_freeze_mixed()
               COMMON_LOG(WARN, "fail to get mem usage", K(ret), K(iter->tenant_id_));
             } else if (0 != frozen_version && OB_FAIL(iter->update_frozen_version(frozen_version))) {
               COMMON_LOG(WARN, "fail to update frozen version", K(ret), K(frozen_version), K(*iter));
+            } else if (OB_FAIL(check_memory_used(iter->tenant_id_, mem_active_memstore_used,
+                mem_minor_freeze_trigger, iter->mem_memstore_limit_, use_too_much_memory))) {
+              COMMON_LOG(WARN, "fail to check memory used", K(ret), K(*iter));
             } else {
-              if (mem_active_memstore_used > mem_minor_freeze_trigger) {
+              if (mem_active_memstore_used > mem_minor_freeze_trigger || use_too_much_memory) {
                 bool finished = false;
                 if (!major_triggered && !need_major && is_major_freeze_turn(iter->freeze_cnt_)) {
                   COMMON_LOG(INFO,
@@ -1899,6 +1876,34 @@ int ObTenantManager::add_tenant_and_used(const uint64_t tenant_id, _callback& ca
           }
         }
       }
+    }
+  }
+  return ret;
+}
+
+int ObTenantManager::check_memory_used(const int64_t tenant_id,
+                                       const double mem_active_memstore_used,
+                                       const double mem_minor_freeze_trigger,
+                                       const double mem_memstore_limit,
+                                       bool &use_too_much_memory)
+{
+  int ret = OB_SUCCESS;
+  use_too_much_memory = false;
+  ObTenantResourceMgrHandle resource_handle;
+  if (OB_FAIL(ObResourceMgr::get_instance().get_tenant_resource_mgr(tenant_id, resource_handle))) {
+    COMMON_LOG(WARN, "fail to get resource mgr", K(ret), K(tenant_id));
+  } else {
+    double total_memory_hold = get_tenant_memory_hold(tenant_id);
+    double memory_limit = get_tenant_memory_limit(tenant_id);
+    double kv_cache_mem = resource_handle.get_memory_mgr()->get_cache_hold();
+    double total_freeze_trigger = mem_memstore_limit + (memory_limit - mem_memstore_limit) * 0.5;
+
+    if (total_memory_hold - kv_cache_mem >= total_freeze_trigger
+         && mem_active_memstore_used >=  1.0/3.0 * total_freeze_trigger) {
+      use_too_much_memory = true;
+      COMMON_LOG(INFO, "too much memory is used, need to minor freeze", K(tenant_id),
+          K(mem_active_memstore_used), K(mem_minor_freeze_trigger),
+          K(total_memory_hold), K(kv_cache_mem), K(memory_limit));
     }
   }
   return ret;

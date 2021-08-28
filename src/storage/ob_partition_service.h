@@ -233,6 +233,7 @@ struct ObReplicaOpArg {
   bool is_physical_restore() const;
   bool is_physical_restore_leader() const;
   bool is_physical_restore_follower() const;
+  bool is_FtoL() const;
   bool is_standby_restore() const;
   const char* get_replica_op_type_str() const;
   TO_STRING_KV(K_(key), K_(dst), K_(src), K_(data_src), K_(quorum), "type", get_replica_op_type_str(), K_(base_version),
@@ -319,7 +320,7 @@ public:
   VIRTUAL_FOR_UNITTEST int start();
   VIRTUAL_FOR_UNITTEST int stop();
   VIRTUAL_FOR_UNITTEST int wait();
-  VIRTUAL_FOR_UNITTEST int destroy();
+  VIRTUAL_FOR_UNITTEST int destroy() override;
 
   VIRTUAL_FOR_UNITTEST int wait_start_finish();
 
@@ -340,9 +341,9 @@ public:
   VIRTUAL_FOR_UNITTEST int log_new_partition(ObIPartitionGroup* partition, const int64_t publish_version);
   VIRTUAL_FOR_UNITTEST int remove_partition(const common::ObPartitionKey& key, const bool write_slog = true);
   VIRTUAL_FOR_UNITTEST int remove_partition_from_pg(
-      const bool for_replay, const ObPartitionKey& pg_key, const ObPartitionKey& pkey, const uint64_t log_id);
-  VIRTUAL_FOR_UNITTEST int online_partition(const common::ObPartitionKey& pkey, const int64_t publish_version,
-      const int64_t restore_snapshot_version, const uint64_t last_restore_log_id);
+      const bool for_replay, const ObPartitionKey &pg_key, const ObPartitionKey &pkey, const uint64_t log_id);
+  VIRTUAL_FOR_UNITTEST int online_partition(const common::ObPartitionKey &pkey, const int64_t publish_version,
+      const int64_t restore_snapshot_version, const int64_t last_restore_log_ts);
   // before building the index, wait for all transactions with lower schema version to finish
   // max_commit_version is the max commit version of those transactions
   VIRTUAL_FOR_UNITTEST int check_schema_version_elapsed(const ObPartitionKey& partition, const int64_t schema_version,
@@ -391,7 +392,7 @@ public:
   VIRTUAL_FOR_UNITTEST int xa_prepare(
       const transaction::ObXATransID& xid, const uint64_t tenant_id, const int64_t stmt_expired_time);
   VIRTUAL_FOR_UNITTEST int xa_end_trans(const transaction::ObXATransID& xid, const bool is_rollback,
-      const int64_t flags, transaction::ObTransDesc& trans_desc);
+      const int64_t flags, transaction::ObTransDesc& trans_desc, bool& access_temp_table);
   VIRTUAL_FOR_UNITTEST int get_xa_trans_state(int32_t& state, transaction::ObTransDesc& trans_desc);
   // partition storage interfaces
   virtual int table_scan(ObVTableScanParam& vparam, common::ObNewRowIterator*& result) override;
@@ -553,7 +554,6 @@ public:
       const uint64_t table_id, const common::ObAddr& server, DupReplicaType& dup_replica_type);
   VIRTUAL_FOR_UNITTEST int get_replica_status(const common::ObPartitionKey& pkey, share::ObReplicaStatus& status) const;
   VIRTUAL_FOR_UNITTEST int get_role(const common::ObPartitionKey& pkey, common::ObRole& role) const;
-  VIRTUAL_FOR_UNITTEST int get_role_for_partition_table(const common::ObPartitionKey& pkey, common::ObRole& role) const;
   VIRTUAL_FOR_UNITTEST int get_role_unsafe(const common::ObPartitionKey& pkey, common::ObRole& role) const;
   VIRTUAL_FOR_UNITTEST int get_leader_curr_member_list(
       const common::ObPartitionKey& pkey, common::ObMemberList& member_list) const;
@@ -691,10 +691,10 @@ public:
       common::ObIArray<int64_t>* split_index) override;
 
   virtual int get_multi_ranges_cost(
-      const common::ObPartitionKey& pkey, const common::ObIArray<common::ObStoreRange>& ranges, int64_t& total_size);
+      const common::ObPartitionKey& pkey, const common::ObIArray<common::ObStoreRange>& ranges, int64_t& total_size) override;
   virtual int split_multi_ranges(const common::ObPartitionKey& pkey,
       const common::ObIArray<common::ObStoreRange>& ranges, const int64_t expected_task_count,
-      common::ObIAllocator& allocator, common::ObArrayArray<common::ObStoreRange>& multi_range_split_array);
+      common::ObIAllocator& allocator, common::ObArrayArray<common::ObStoreRange>& multi_range_split_array) override;
   VIRTUAL_FOR_UNITTEST int is_log_sync(
       const common::ObPartitionKey& key, bool& is_sync, uint64_t& max_confirmed_log_id);
   VIRTUAL_FOR_UNITTEST int set_region(const ObPartitionKey& key, clog::ObIPartitionLogService* pls);
@@ -758,7 +758,7 @@ public:
   int process_migrate_retry_task(const ObMigrateRetryTask& task);
   bool reach_tenant_partition_limit(const int64_t batch_cnt, const uint64_t tenant_id, const bool is_pg_arg);
   int retry_rebuild_loop();
-  VIRTUAL_FOR_UNITTEST int get_pg_key(const ObPartitionKey& pkey, ObPGKey& pg_key);
+  VIRTUAL_FOR_UNITTEST int get_pg_key(const ObPartitionKey& pkey, ObPGKey& pg_key) const override;
   static int mtl_init(ObTenantStorageInfo*& tenant_store_info)
   {
     int ret = common::OB_SUCCESS;
@@ -781,8 +781,8 @@ public:
 
   int set_restore_flag(const ObPartitionKey& pkey, const int16_t flag);
   int set_restore_snapshot_version_for_trans(const ObPartitionKey& pkey, const int64_t restore_snapshot_version);
-  int get_restore_replay_info(
-      const ObPartitionKey& pkey, uint64_t& restore_last_replay_log_id, int64_t& restore_snapshot_version);
+  int get_restore_replay_info(const ObPartitionKey &pkey, uint64_t &restore_last_replay_log_id,
+      int64_t &restore_last_replay_log_ts, int64_t &restore_snapshot_version);
   int wait_all_trans_clear(const ObPartitionKey& pkey);
   int check_all_trans_in_trans_table_state(const ObPartitionKey& pkey);
 
@@ -796,8 +796,8 @@ public:
   int check_physical_flashback_succ(
       const obrpc::ObCheckPhysicalFlashbackArg& arg, obrpc::ObPhysicalFlashbackResultArg& result);
   int nonblock_renew_loc_cache(const common::ObPartitionKey& pkey);
-  int submit_pt_update_task(const ObPartitionKey& pkey);
-  int submit_pt_update_role_task(const ObPartitionKey& pkey);
+  int submit_pt_update_task(const ObPartitionKey& pkey) override;
+  int submit_pt_update_role_task(const ObPartitionKey& pkey) override;
   int start_physical_flashback();
   int check_can_physical_flashback();
   int try_freeze_aggre_buffer(const common::ObPartitionKey& pkey);
@@ -986,8 +986,8 @@ private:
   int handle_rebuild_result_(
       const common::ObPartitionKey pkey, const common::ObReplicaType replica_type, const int ret_val);
   bool reach_tenant_partition_limit_(const int64_t batch_cnt, const uint64_t tenant_id, const bool is_pg_arg);
-  int get_pg_key_(const ObPartitionKey& pkey, ObPGKey& pg_key);
-  int get_pg_key_from_index_schema_(const ObPartitionKey& pkey, ObPGKey& pg_key);
+  int get_pg_key_(const ObPartitionKey& pkey, ObPGKey& pg_key) const;
+  int get_pg_key_from_index_schema_(const ObPartitionKey& pkey, ObPGKey& pg_key) const;
   int submit_add_partition_to_pg_clog_(const common::ObIArray<obrpc::ObCreatePartitionArg>& batch_arg,
       const int64_t timeout, common::ObIArray<uint64_t>& log_id_arr);
   int write_partition_schema_version_change_clog_(const common::ObPGKey& pg_key, const common::ObPartitionKey& pkey,
@@ -996,6 +996,7 @@ private:
       common::ObIArray<obrpc::ObCreatePartitionArg>& target_batch_arg, common::ObIArray<int>& batch_res);
   void free_partition_list(ObArray<ObIPartitionGroup*>& partition_list);
   void submit_pt_update_task_(const ObPartitionKey& pkey, const bool need_report_checksum = true);
+  int submit_pg_pt_update_task_(const ObPartitionKey &pkey);
   int try_inc_total_partition_cnt(const int64_t new_partition_cnt, const bool need_check);
   int physical_flashback();
   int clean_all_clog_files_();
@@ -1362,13 +1363,13 @@ OB_INLINE int ObPartitionService::xa_prepare(
 }
 
 OB_INLINE int ObPartitionService::xa_end_trans(const transaction::ObXATransID& xid, const bool is_rollback,
-    const int64_t flags, transaction::ObTransDesc& trans_desc)
+    const int64_t flags, transaction::ObTransDesc& trans_desc, bool& access_temp_table)
 {
   int ret = common::OB_SUCCESS;
   if (OB_FAIL(check_init(txs_, "transaction service"))) {
     STORAGE_LOG(WARN, "ObTransService check init error");
   } else {
-    ret = txs_->xa_end_trans_v2(xid, is_rollback, flags, trans_desc);
+    ret = txs_->xa_end_trans_v2(xid, is_rollback, flags, trans_desc, access_temp_table);
   }
   return ret;
 }

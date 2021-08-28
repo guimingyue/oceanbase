@@ -96,7 +96,8 @@
 %left	AND AND_OP
 %left   BETWEEN CASE WHEN THEN ELSE
 %nonassoc LOWER_THAN_COMP
-%left   COMP_EQ COMP_NSEQ COMP_GE COMP_GT COMP_LE COMP_LT COMP_NE IS LIKE IN REGEXP
+%left   COMP_EQ COM P_NSEQ COMP_GE COMP_GT COMP_LE COMP_LT COMP_NE IS LIKE IN REGEXP
+%nonassoc STRING_VALUE
 %right  ESCAPE /*for conflict for escape*/
 %left   '|'
 %left   '&'
@@ -108,8 +109,9 @@
 %left CNNOP
 %left   NEG '~'
 %nonassoc LOWER_PARENS
+//%nonassoc STRING_VALUE
 %left   '(' ')'
-%nonassoc HIGHER_PARENS TRANSACTION/*for simple_expr conflict*/
+%nonassoc HIGHER_PARENS TRANSACTION /*for simple_expr conflict*/
 %left   '.'
 %right  NOT NOT2
 %right BINARY COLLATE
@@ -230,9 +232,9 @@ END_P SET_VAR DELIMITER
 
         KEY_BLOCK_SIZE KEY_VERSION KVCACHE
 
-        LAG LANGUAGE LAST LAST_VALUE LEAD LEADER LEAVES LESS LEAK LEAK_MOD LEAK_RATE LINESTRING LIST_
+        LAG LANGUAGE LAST LAST_VALUE LEAD LEADER LEAVES LESS LEAK LEAK_MOD LINESTRING LIST_
         LISTAGG LOCAL LOCALITY LOCATION LOCKED LOCKS LOGFILE LOGONLY_REPLICA_NUM LOGS LOCK_ LOGICAL_READS
-        LEVEL
+        LEVEL LN LOG
 
         MAJOR MANUAL MASTER MASTER_AUTO_POSITION MASTER_CONNECT_RETRY MASTER_DELAY MASTER_HEARTBEAT_PERIOD
         MASTER_HOST MASTER_LOG_FILE MASTER_LOG_POS MASTER_PASSWORD MASTER_PORT MASTER_RETRY_COUNT
@@ -306,7 +308,7 @@ END_P SET_VAR DELIMITER
 %type <node> create_tenant_stmt opt_tenant_option_list alter_tenant_stmt drop_tenant_stmt
 %type <node> create_restore_point_stmt drop_restore_point_stmt
 %type <node> create_resource_stmt drop_resource_stmt alter_resource_stmt
-%type <node> cur_timestamp_func cur_time_func cur_date_func now_synonyms_func utc_timestamp_func sys_interval_func sysdate_func
+%type <node> cur_timestamp_func cur_time_func cur_date_func now_synonyms_func utc_timestamp_func utc_time_func utc_date_func sys_interval_func sysdate_func
 %type <node> opt_create_resource_pool_option_list create_resource_pool_option alter_resource_pool_option_list alter_resource_pool_option
 %type <node> opt_shrink_unit_option unit_id_list
 %type <node> opt_resource_unit_option_list resource_unit_option
@@ -341,7 +343,7 @@ END_P SET_VAR DELIMITER
 %type <node> index_hint_definition index_hint_list
 %type <node> tracing_num_list
 %type <node> qb_name_option
-%type <node> join_condition inner_join_type opt_inner outer_join_type opt_outer natural_join_type
+%type <node> join_condition inner_join_type opt_inner outer_join_type opt_outer natural_join_type except_full_outer_join_type opt_full_table_factor
 %type <ival> string_length_i opt_string_length_i opt_string_length_i_v2 opt_int_length_i opt_bit_length_i opt_datetime_fsp_i opt_unsigned_i opt_zerofill_i opt_year_i opt_time_func_fsp_i
 %type <node> opt_float_precision opt_number_precision
 %type <node> opt_equal_mark opt_default_mark read_only_or_write not not2 opt_disk_alias
@@ -397,14 +399,14 @@ END_P SET_VAR DELIMITER
 %type <node> opt_index_name opt_key_or_index opt_index_options opt_primary  opt_all
 %type <node> charset_key database_key charset_name charset_name_or_default collation_name databases_or_schemas trans_param_name trans_param_value
 %type <node> set_names_stmt set_charset_stmt
-%type <node> charset_introducer opt_charset_introducer complex_string_literal literal number_literal now_or_signed_literal signed_literal
+%type <node> charset_introducer complex_string_literal literal number_literal now_or_signed_literal signed_literal
 %type <node> create_tablegroup_stmt drop_tablegroup_stmt alter_tablegroup_stmt default_tablegroup
 %type <node> set_transaction_stmt transaction_characteristics transaction_access_mode isolation_level
 %type <node> lock_tables_stmt unlock_tables_stmt lock_type lock_table_list lock_table opt_local
 %type <node> purge_stmt
 %type <node> tenant_name_list opt_tenant_list tenant_list_tuple cache_type flush_scope opt_zone_list
 %type <node> into_opt into_clause field_opt field_term field_term_list line_opt line_term line_term_list into_var_list into_var
-%type <node> string_list text_string
+%type <node> string_list text_string string_val_list
 %type <node> balance_task_type opt_balance_task_type
 %type <node> list_expr list_partition_element list_partition_expr list_partition_list list_partition_option opt_list_partition_list opt_list_subpartition_list list_subpartition_list list_subpartition_element drop_partition_name_list
 %type <node> primary_zone_name locality_name change_tenant_name_or_tenant_id distribute_method opt_distribute_method
@@ -415,6 +417,7 @@ END_P SET_VAR DELIMITER
 %type <node> opt_match_option
 %type <ival> match_action
 %type <node> opt_reference_option_list reference_option require_specification tls_option_list tls_option
+%type <node> opt_resource_option resource_option_list resource_option
 %type <ival> reference_action
 %type <node> alter_foreign_key_action
 %type <node> optimize_stmt
@@ -422,7 +425,7 @@ END_P SET_VAR DELIMITER
 %type <node> create_savepoint_stmt rollback_savepoint_stmt release_savepoint_stmt
 %type <node> opt_qb_name
 %type <node> opt_force_purge
-%type <node> opt_sql_throttle_for_priority opt_sql_throttle_using_cond sql_throttle_one_or_more_metrics sql_throttle_metric
+%type <node> opt_sql_throttle_for_priority opt_sql_throttle_using_cond sql_throttle_one_or_more_metrics sql_throttle_metric get_format_unit
 %start sql_stmt
 %%
 ////////////////////////////////////////////////////////////////
@@ -711,30 +714,25 @@ column_name
 }
 ;
 
-opt_charset_introducer:
-/*empty*/
-{
-  $$ = NULL;
-}
-| charset_introducer
-{
-  $$ = $1;
-};
-
 /* literal string with  */
 complex_string_literal:
-opt_charset_introducer STRING_VALUE
+STRING_VALUE %prec LOWER_THAN_COMP
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_VARCHAR, 2, NULL, $1);
+  $$->str_value_ = $1->str_value_;
+  $$->str_len_ = $1->str_len_;
+  $$->raw_text_ = $1->raw_text_;
+  $$->text_len_ = $1->text_len_;
+  @$.first_column = @1.first_column;
+  @$.last_column = @1.last_column;
+}
+| charset_introducer STRING_VALUE
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_VARCHAR, 2, $1, $2);
   $$->str_value_ = $2->str_value_;
   $$->str_len_ = $2->str_len_;
   $$->raw_text_ = $2->raw_text_;
   $$->text_len_ = $2->text_len_;
-  if (NULL == $1)
-  {
-    @$.first_column = @2.first_column;
-    @$.last_column = @2.last_column;
-  }
 }
 | charset_introducer HEX_STRING_VALUE
 {
@@ -1013,7 +1011,19 @@ bit_expr IN in_expr
   //In the resolver, if only two children are found, the escape parameter will be set to '\'
   malloc_non_terminal_node($$, result->malloc_pool_, T_OP_LIKE, 2, $1, $3);
 }
-| bit_expr LIKE simple_expr ESCAPE simple_expr  %prec LIKE
+| bit_expr LIKE STRING_VALUE string_val_list %prec LOWER_THAN_COMP
+{
+  //在resolver时，如果发现只有两个children，会将escape 参数设置为‘\’
+  ParseNode *str_node = NULL;
+  malloc_non_terminal_node(str_node, result->malloc_pool_, T_LINK_NODE, 2, $3, $4);
+  ParseNode *string_list_node = NULL;
+  merge_nodes(string_list_node, result, T_EXPR_LIST, str_node);
+  ParseNode *concat_node = NULL;
+  make_name_node(concat_node, result->malloc_pool_, "concat");
+  malloc_non_terminal_node(concat_node, result->malloc_pool_, T_FUN_SYS, 2, concat_node, string_list_node);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_OP_LIKE, 2, $1, concat_node);
+}
+| bit_expr LIKE simple_expr ESCAPE simple_expr %prec LIKE
 {
   // If escape is an empty string '', the default value'\' is used
   if (OB_UNLIKELY(T_VARCHAR == $5->type_ && 0 == $5->str_len_)) {
@@ -1026,11 +1036,73 @@ bit_expr IN in_expr
     malloc_non_terminal_node($$, result->malloc_pool_, T_OP_LIKE, 3, $1, $3, $5);
   }
 }
+| bit_expr LIKE STRING_VALUE string_val_list ESCAPE simple_expr %prec LIKE
+{
+  // 如果escape 为空串 '', 则使用默认值'\'
+  ParseNode *str_node = NULL;
+  malloc_non_terminal_node(str_node, result->malloc_pool_, T_LINK_NODE, 2, $3, $4);
+  ParseNode *string_list_node = NULL;
+  merge_nodes(string_list_node, result, T_EXPR_LIST, str_node);
+  ParseNode *concat_node = NULL;
+  make_name_node(concat_node, result->malloc_pool_, "concat");
+  malloc_non_terminal_node(concat_node, result->malloc_pool_, T_FUN_SYS, 2, concat_node, string_list_node);
+  if (OB_UNLIKELY(T_VARCHAR == $6->type_ && 0 == $6->str_len_)) {
+    ParseNode *node = NULL;
+    malloc_terminal_node(node, result->malloc_pool_, T_VARCHAR);
+    node->str_value_ = "\\";
+    node->str_len_ = 1;
+    malloc_non_terminal_node($$, result->malloc_pool_, T_OP_LIKE, 3, $1, concat_node, node);
+  } else {
+    malloc_non_terminal_node($$, result->malloc_pool_, T_OP_LIKE, 3, $1, concat_node, $6);
+  }
+}
+| bit_expr LIKE simple_expr ESCAPE STRING_VALUE string_val_list  %prec LIKE
+{
+  ParseNode *escape_node = NULL;
+  malloc_non_terminal_node(escape_node, result->malloc_pool_, T_LINK_NODE, 2, $5, $6);
+  ParseNode *escape_list_node = NULL;
+  merge_nodes(escape_list_node, result, T_EXPR_LIST, escape_node);
+  ParseNode *concat_node = NULL;
+  make_name_node(concat_node, result->malloc_pool_, "concat");
+  malloc_non_terminal_node(concat_node, result->malloc_pool_, T_FUN_SYS, 2, concat_node, escape_list_node);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_OP_LIKE, 3, $1, $3, concat_node);
+}
+| bit_expr LIKE STRING_VALUE string_val_list ESCAPE STRING_VALUE string_val_list %prec LIKE
+{
+  ParseNode *str_node = NULL;
+  ParseNode *escape_node = NULL;
+  malloc_non_terminal_node(str_node, result->malloc_pool_, T_LINK_NODE, 2, $3, $4);
+  malloc_non_terminal_node(escape_node, result->malloc_pool_, T_LINK_NODE, 2, $6, $7);
+  ParseNode *string_list_node = NULL;
+  ParseNode *escape_list_node = NULL;
+  merge_nodes(string_list_node, result, T_EXPR_LIST, str_node);
+  merge_nodes(escape_list_node, result, T_EXPR_LIST, escape_node);
+  ParseNode *concat_node1 = NULL;
+  ParseNode *concat_node2 = NULL;
+  make_name_node(concat_node1, result->malloc_pool_, "concat");
+  make_name_node(concat_node2, result->malloc_pool_, "concat");
+  malloc_non_terminal_node(concat_node1, result->malloc_pool_, T_FUN_SYS, 2, concat_node1, string_list_node);
+  malloc_non_terminal_node(concat_node2, result->malloc_pool_, T_FUN_SYS, 2, concat_node2, escape_list_node);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_OP_LIKE, 3, $1, concat_node1, concat_node2);
+}
 | bit_expr not LIKE simple_expr
 {
   (void)($2);
   //In the resolver, if only two children are found, the escape parameter will be set to '\'
   malloc_non_terminal_node($$, result->malloc_pool_, T_OP_NOT_LIKE, 2, $1, $4);
+}
+| bit_expr not LIKE STRING_VALUE string_val_list %prec LOWER_THAN_COMP
+{
+  (void)($2);
+  //在resolver时，如果发现只有两个children，会将escape 参数设置为‘\’
+  ParseNode *str_node = NULL;
+  malloc_non_terminal_node(str_node, result->malloc_pool_, T_LINK_NODE, 2, $4, $5);
+  ParseNode *string_list_node = NULL;
+  merge_nodes(string_list_node, result, T_EXPR_LIST, str_node);
+  ParseNode *concat_node = NULL;
+  make_name_node(concat_node, result->malloc_pool_, "concat");
+  malloc_non_terminal_node(concat_node, result->malloc_pool_, T_FUN_SYS, 2, concat_node, string_list_node);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_OP_NOT_LIKE, 2, $1, concat_node);
 }
 | bit_expr not LIKE simple_expr ESCAPE simple_expr %prec LIKE
 {
@@ -1046,18 +1118,103 @@ bit_expr IN in_expr
     malloc_non_terminal_node($$, result->malloc_pool_, T_OP_NOT_LIKE, 3, $1, $4, $6);
   }
 }
+| bit_expr not LIKE STRING_VALUE string_val_list ESCAPE simple_expr %prec LIKE
+{
+  (void)($2);
+  ParseNode *str_node = NULL;
+  malloc_non_terminal_node(str_node, result->malloc_pool_, T_LINK_NODE, 2, $4, $5);
+  ParseNode *string_list_node = NULL;
+  merge_nodes(string_list_node, result, T_EXPR_LIST, str_node);
+  ParseNode *concat_node = NULL;
+  make_name_node(concat_node, result->malloc_pool_, "concat");
+  malloc_non_terminal_node(concat_node, result->malloc_pool_, T_FUN_SYS, 2, concat_node, string_list_node);
+  // 如果escape 为空串 '', 则使用默认值'\'
+  if (OB_UNLIKELY(T_VARCHAR == $7->type_ && 0 == $7->str_len_)) {
+    ParseNode *node = NULL;
+    malloc_terminal_node(node, result->malloc_pool_, T_VARCHAR);
+    node->str_value_ = "\\";
+    node->str_len_ = 1;
+    malloc_non_terminal_node($$, result->malloc_pool_, T_OP_NOT_LIKE, 3, $1, concat_node, node);
+  } else {
+    malloc_non_terminal_node($$, result->malloc_pool_, T_OP_NOT_LIKE, 3, $1, concat_node, $7);
+  }
+}
+| bit_expr not LIKE simple_expr ESCAPE STRING_VALUE string_val_list %prec LIKE
+{
+  (void)($2);
+  ParseNode *escape_node = NULL;
+  malloc_non_terminal_node(escape_node, result->malloc_pool_, T_LINK_NODE, 2, $6, $7);
+  ParseNode *escape_list_node = NULL;
+  merge_nodes(escape_list_node, result, T_EXPR_LIST, escape_node);
+  ParseNode *concat_node = NULL;
+  make_name_node(concat_node, result->malloc_pool_, "concat");
+  malloc_non_terminal_node(concat_node, result->malloc_pool_, T_FUN_SYS, 2, concat_node, escape_list_node);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_OP_NOT_LIKE, 3, $1, $4, concat_node);
+}
+| bit_expr not LIKE STRING_VALUE string_val_list ESCAPE STRING_VALUE string_val_list %prec LIKE
+{
+  (void)($2);
+  ParseNode *str_node = NULL;
+  ParseNode *escape_node = NULL;
+  malloc_non_terminal_node(str_node, result->malloc_pool_, T_LINK_NODE, 2, $4, $5);
+  malloc_non_terminal_node(escape_node, result->malloc_pool_, T_LINK_NODE, 2, $7, $8);
+  ParseNode *string_list_node = NULL;
+  ParseNode *escape_list_node = NULL;
+  merge_nodes(string_list_node, result, T_EXPR_LIST, str_node);
+  merge_nodes(escape_list_node, result, T_EXPR_LIST, escape_node);
+  ParseNode *concat_node1 = NULL;
+  ParseNode *concat_node2 = NULL;
+  make_name_node(concat_node1, result->malloc_pool_, "concat");
+  make_name_node(concat_node2, result->malloc_pool_, "concat");
+  malloc_non_terminal_node(concat_node1, result->malloc_pool_, T_FUN_SYS, 2, concat_node1, string_list_node);
+  malloc_non_terminal_node(concat_node2, result->malloc_pool_, T_FUN_SYS, 2, concat_node2, escape_list_node);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_OP_NOT_LIKE, 3, $1, concat_node1, concat_node2);
+}
 | bit_expr REGEXP bit_expr
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_OP_REGEXP, 2, $1, $3);
+}
+| bit_expr REGEXP STRING_VALUE string_val_list %prec LOWER_THAN_COMP
+{
+  ParseNode *str_node = NULL;
+  malloc_non_terminal_node(str_node, result->malloc_pool_, T_LINK_NODE, 2, $3, $4);
+  ParseNode *string_list_node = NULL;
+  merge_nodes(string_list_node, result, T_EXPR_LIST, str_node);
+  ParseNode *concat_node = NULL;
+  make_name_node(concat_node, result->malloc_pool_, "concat");
+  malloc_non_terminal_node(concat_node, result->malloc_pool_, T_FUN_SYS, 2, concat_node, string_list_node);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_OP_REGEXP, 2, $1, concat_node);
 }
 | bit_expr not REGEXP bit_expr
 {
   (void)($2);
   malloc_non_terminal_node($$, result->malloc_pool_, T_OP_NOT_REGEXP, 2, $1, $4);
 }
+| bit_expr not REGEXP STRING_VALUE string_val_list %prec LOWER_THAN_COMP
+{
+  (void)($2);
+  ParseNode *str_node = NULL;
+  malloc_non_terminal_node(str_node, result->malloc_pool_, T_LINK_NODE, 2, $4, $5);
+  ParseNode *string_list_node = NULL;
+  merge_nodes(string_list_node, result, T_EXPR_LIST, str_node);
+  ParseNode *concat_node = NULL;
+  make_name_node(concat_node, result->malloc_pool_, "concat");
+  malloc_non_terminal_node(concat_node, result->malloc_pool_, T_FUN_SYS, 2, concat_node, string_list_node);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_OP_NOT_REGEXP, 2, $1, concat_node);
+}
 | bit_expr %prec LOWER_THAN_COMP
 { $$ = $1; }
 ;
+
+string_val_list:
+STRING_VALUE
+{
+ $$ = $1;
+}
+| string_val_list STRING_VALUE
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $2);
+};
 
 bit_expr:
 bit_expr '|' bit_expr %prec '|'
@@ -1970,6 +2127,14 @@ MOD '(' expr ',' expr ')'
 {
   $$ = $1;
 }
+| utc_time_func
+{
+  $$ = $1;
+}
+| utc_date_func
+{
+  $$ = $1;
+}
 | CAST '(' expr AS cast_data_type ')'
 {
   //cast_data_type is a T_CAST_ARGUMENT rather than a T_INT to avoid being parameterized automatically
@@ -2046,6 +2211,13 @@ MOD '(' expr ',' expr ')'
   make_name_node($$, result->malloc_pool_, "time");
   malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
 }
+| TIMESTAMP '(' expr ')'
+{
+  ParseNode *params = NULL;
+  malloc_non_terminal_node(params, result->malloc_pool_, T_EXPR_LIST, 1, $3);
+  make_name_node($$, result->malloc_pool_, "timestamp");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+}
 | MONTH '(' expr ')'
 {
   ParseNode *params = NULL;
@@ -2079,6 +2251,13 @@ MOD '(' expr ',' expr ')'
   ParseNode *params = NULL;
   malloc_non_terminal_node(params, result->malloc_pool_, T_EXPR_LIST, 1, $3);
   make_name_node($$, result->malloc_pool_, "second");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+}
+| GET_FORMAT '(' get_format_unit ',' expr ')'
+{
+  ParseNode *params = NULL;
+  malloc_non_terminal_node(params, result->malloc_pool_, T_EXPR_LIST, 2, $3, $5);
+  make_name_node($$, result->malloc_pool_, "get_format");
   malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
 }
 | MINUTE '(' expr ')'
@@ -2231,6 +2410,47 @@ MOD '(' expr ',' expr ')'
   make_name_node($$, result->malloc_pool_, "char");
   malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params_node);
 }
+| LOG '(' expr ',' expr ')'
+{
+  ParseNode *params = NULL;
+  malloc_non_terminal_node(params, result->malloc_pool_, T_EXPR_LIST, 2, $3, $5);
+  make_name_node($$, result->malloc_pool_, "log");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+}
+| LOG '(' expr ')'
+{
+  ParseNode *param_node = NULL;
+  malloc_terminal_node(param_node, result->malloc_pool_, T_SFU_DOUBLE);
+  int64_t len = strlen("2.718281828459045");
+  param_node->str_value_ = parse_strndup("2.718281828459045", len, result->malloc_pool_);
+  if (OB_UNLIKELY(NULL == param_node->str_value_)) {
+    yyerror(NULL, result, "No more space for mallocing string\n");
+    YYABORT_NO_MEMORY;
+  }
+  param_node->str_len_ = len;
+  ParseNode *param_list_node = NULL;
+  malloc_non_terminal_node(param_list_node, result->malloc_pool_, T_LINK_NODE, 2, param_node, $3);
+  merge_nodes(param_list_node, result, T_EXPR_LIST, param_list_node);
+  make_name_node($$, result->malloc_pool_, "log");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, param_list_node);
+}
+| LN '(' expr ')'
+{
+  ParseNode *param_node = NULL;
+  malloc_terminal_node(param_node, result->malloc_pool_, T_SFU_DOUBLE);
+  int64_t len = strlen("2.718281828459045");
+  param_node->str_value_ = parse_strndup("2.718281828459045", len, result->malloc_pool_);
+  if (OB_UNLIKELY(NULL == param_node->str_value_)) {
+    yyerror(NULL, result, "No more space for mallocing string\n");
+    YYABORT_NO_MEMORY;
+  }
+  param_node->str_len_ = len;
+  ParseNode *param_list_node = NULL;
+  malloc_non_terminal_node(param_list_node, result->malloc_pool_, T_LINK_NODE, 2, param_node, $3);
+  merge_nodes(param_list_node, result, T_EXPR_LIST, param_list_node);
+  make_name_node($$, result->malloc_pool_, "log");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, param_list_node);
+}
 | function_name '(' opt_expr_as_list ')'
 {
   if (NULL != $3)
@@ -2285,7 +2505,11 @@ INTERVAL '(' expr ',' expr ')'
 ;
 
 utc_timestamp_func:
-UTC_TIMESTAMP '(' ')'
+UTC_TIMESTAMP
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_UTC_TIMESTAMP, 1, NULL);
+}
+| UTC_TIMESTAMP '(' ')'
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_UTC_TIMESTAMP, 1, NULL);
 }
@@ -2294,6 +2518,33 @@ UTC_TIMESTAMP '(' ')'
   malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_UTC_TIMESTAMP, 1, $3);
 }
 ;
+
+utc_time_func:
+UTC_TIME
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_UTC_TIME, 1, NULL);
+}
+| UTC_TIME '(' ')'
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_UTC_TIME, 1, NULL);
+}
+| UTC_TIME '(' INTNUM ')'
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_UTC_TIME, 1, $3);
+}
+;
+
+utc_date_func:
+UTC_DATE
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_UTC_DATE, 1, NULL);
+}
+| UTC_DATE '(' ')'
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS_UTC_DATE, 1, NULL);
+}
+;
+
 
 sysdate_func:
 SYSDATE '(' ')'
@@ -4039,6 +4290,24 @@ DATETIME    { $$[0] = T_DATETIME; $$[1] = 0; }
 | TIME        { $$[0] = T_TIME; $$[1] = 0; }
 ;
 
+get_format_unit:
+DATETIME
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = GET_FORMAT_DATETIME;
+}
+| DATE
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = GET_FORMAT_DATE;
+}
+| TIME
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = GET_FORMAT_TIME;
+}
+;
+
 data_type:
 int_type_i opt_int_length_i opt_unsigned_i opt_zerofill_i
 {
@@ -4119,12 +4388,21 @@ int_type_i opt_int_length_i opt_unsigned_i opt_zerofill_i
 | blob_type_i opt_string_length_i_v2
 {
   malloc_terminal_node($$, result->malloc_pool_, $1[0]);
+  if (0 == $2[1]) {
+    $2[0] = 0; /* change default string len from -1 to 0 for compat mysql */
+  } 
   $$->int32_values_[0] = $2[0];
   $$->int32_values_[1] = 1; /* is binary */
 }
 | text_type_i opt_string_length_i_v2 opt_binary opt_charset opt_collation
 {
   malloc_non_terminal_node($$, result->malloc_pool_, $1[0], 3, $4, $5, $3);
+  if ($1[0] != T_TEXT && $2[0] != -1) {
+    yyerror(&@2, result, "not support to specify the length in parentheses\n");
+    YYERROR;
+  } else if (0 == $2[1]) {
+    $2[0] = 0; /* change default string len from -1 to 0 for compat mysql */
+  }
   $$->int32_values_[0] = $2[0];
   $$->int32_values_[1] = 0; /* is text */
 }
@@ -8424,29 +8702,67 @@ joined_table:
 /**
  * ref: https://dev.mysql.com/doc/refman/8.0/en/join.html
  */
-table_reference inner_join_type table_factor %prec LOWER_ON
+table_reference inner_join_type opt_full_table_factor %prec LOWER_ON
 {
   JOIN_MERGE_NODES($1, $3);
   malloc_non_terminal_node($$, result->malloc_pool_, T_JOINED_TABLE, 5, $2, $1, $3, NULL, NULL);
 }
-| table_reference inner_join_type table_factor ON expr
+| table_reference inner_join_type opt_full_table_factor ON expr
 {
   JOIN_MERGE_NODES($1, $3);
   malloc_non_terminal_node($$, result->malloc_pool_, T_JOINED_TABLE, 5, $2, $1, $3, $5, NULL);
 }
-| table_reference inner_join_type table_factor USING '(' column_list ')'
+| table_reference inner_join_type opt_full_table_factor USING '(' column_list ')'
 {
   JOIN_MERGE_NODES($1, $3);
   ParseNode *condition_node = NULL;
   merge_nodes(condition_node, result, T_COLUMN_LIST, $6);
   malloc_non_terminal_node($$, result->malloc_pool_, T_JOINED_TABLE, 5, $2, $1, $3, condition_node, NULL);
 }
-| table_reference outer_join_type table_factor join_condition
+| table_reference except_full_outer_join_type opt_full_table_factor join_condition
 {
   JOIN_MERGE_NODES($1, $3);
   malloc_non_terminal_node($$, result->malloc_pool_, T_JOINED_TABLE, 5, $2, $1, $3, $4, NULL);
 }
-| table_reference natural_join_type table_factor
+| table_reference FULL JOIN opt_full_table_factor join_condition
+{
+  JOIN_MERGE_NODES($1, $4);
+  malloc_terminal_node($$, result->malloc_pool_, T_JOIN_FULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_JOINED_TABLE, 5, $$, $1, $4, $5, NULL);
+}
+| table_reference FULL OUTER JOIN opt_full_table_factor join_condition
+{
+  JOIN_MERGE_NODES($1, $5);
+  malloc_terminal_node($$, result->malloc_pool_, T_JOIN_FULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_JOINED_TABLE, 5, $$, $1, $5, $6, NULL);
+}
+| table_reference FULL %prec LOWER_COMMA
+{
+  if ($1->type_ == T_ORG) {
+    ParseNode *name_node = NULL;
+    make_name_node(name_node, result->malloc_pool_, "full");
+    malloc_non_terminal_node($$, result->malloc_pool_, T_ALIAS, $1->num_child_ + 1);
+    for (int i = 0; i <= $1->num_child_; ++i) {
+      if (i == 0) {
+        $$->children_[i] = $1->children_[i];
+      } else if (i == 1) {
+        $$->children_[i] = name_node;
+      } else {
+        $$->children_[i] = $1->children_[i - 1];
+      }
+    }
+  } else if ($1->type_ == T_ALIAS && $1->children_[1] != NULL &&
+             strlen($1->children_[1]->str_value_) == 0) {
+    ParseNode *name_node = NULL;
+    make_name_node(name_node, result->malloc_pool_, "full");
+    $1->children_[1] = name_node;
+    $$ = $1;
+  } else {
+    yyerror(&@2, result, "occur multi alias name\n");
+    YYERROR;
+  }
+}
+| table_reference natural_join_type opt_full_table_factor
 {
   JOIN_MERGE_NODES($1, $3);
 
@@ -8454,6 +8770,39 @@ table_reference inner_join_type table_factor %prec LOWER_ON
   malloc_terminal_node(join_attr, result->malloc_pool_, T_NATURAL_JOIN);
 
   malloc_non_terminal_node($$, result->malloc_pool_, T_JOINED_TABLE, 5, $2, $1, $3, NULL, join_attr);
+}
+;
+
+opt_full_table_factor:
+table_factor %prec LOWER_COMMA
+{
+  $$ = $1;
+}
+| table_factor FULL
+{
+  if ($1->type_ == T_ORG) {
+    ParseNode *name_node = NULL;
+    make_name_node(name_node, result->malloc_pool_, "full");
+    malloc_non_terminal_node($$, result->malloc_pool_, T_ALIAS, $1->num_child_ + 1);
+    for (int i = 0; i <= $1->num_child_; ++i) {
+      if (i == 0) {
+        $$->children_[i] = $1->children_[i];
+      } else if (i == 1) {
+        $$->children_[i] = name_node;
+      } else {
+        $$->children_[i] = $1->children_[i - 1];
+      }
+    }
+  } else if ($1->type_ == T_ALIAS && $1->children_[1] != NULL &&
+             strlen($1->children_[1]->str_value_) == 0) {
+    ParseNode *name_node = NULL;
+    make_name_node(name_node, result->malloc_pool_, "full");
+    $1->children_[1] = name_node;
+    $$ = $1;
+  } else {
+    yyerror(&@2, result, "occur multi alias name\n");
+    YYERROR;
+  }
 }
 ;
 
@@ -8509,6 +8858,22 @@ FULL opt_outer JOIN
   malloc_terminal_node($$, result->malloc_pool_, T_JOIN_RIGHT);
 }
 ;
+
+except_full_outer_join_type:
+LEFT opt_outer JOIN
+{
+  /* make bison mute */
+  (void)($2);
+  malloc_terminal_node($$, result->malloc_pool_, T_JOIN_LEFT);
+}
+| RIGHT opt_outer JOIN
+{
+  /* make bison mute */
+  (void)($2);
+  malloc_terminal_node($$, result->malloc_pool_, T_JOIN_RIGHT);
+}
+;
+
 
 opt_outer:
 OUTER                    { $$ = NULL; }
@@ -9007,19 +9372,23 @@ opt_desc_column_option:
  *
  *****************************************************************************/
 create_user_stmt:
-CREATE USER opt_if_not_exists user_specification_list
+CREATE USER opt_if_not_exists user_specification_list opt_resource_option
 {
   ParseNode *users_node = NULL;
   merge_nodes(users_node, result, T_USERS, $4);
-  malloc_non_terminal_node($$, result->malloc_pool_, T_CREATE_USER, 3, $3, users_node, NULL);
+  ParseNode *res_opt_node = NULL;
+  merge_nodes(res_opt_node, result, T_USER_RESOURCE_OPTIONS, $5);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_CREATE_USER, 4, $3, users_node, NULL, res_opt_node);
 }
-| CREATE USER opt_if_not_exists user_specification_list require_specification
+| CREATE USER opt_if_not_exists user_specification_list require_specification opt_resource_option
 {
   ParseNode *users_node = NULL;
   merge_nodes(users_node, result, T_USERS, $4);
   ParseNode *require_node = NULL;
   merge_nodes(require_node, result, T_TLS_OPTIONS, $5);
-  malloc_non_terminal_node($$, result->malloc_pool_, T_CREATE_USER, 3, $3, users_node, require_node);
+  ParseNode *res_opt_node = NULL;
+  merge_nodes(res_opt_node, result, T_USER_RESOURCE_OPTIONS, $6);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_CREATE_USER, 4, $3, users_node, require_node, res_opt_node);
 }
 ;
 
@@ -9077,6 +9446,52 @@ REQUIRE NONE
   merge_nodes(specified_node, result, T_TLS_SPECIFIED, $2);
   malloc_non_terminal_node($$, result->malloc_pool_, T_TLS_SPECIFIED, 1, specified_node);
 }
+;
+
+opt_resource_option:
+WITH resource_option_list
+{
+  $$ = $2;
+}
+|
+{
+  $$ = NULL;
+}
+;
+
+resource_option_list:
+resource_option_list resource_option
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $2);
+}
+| resource_option
+{
+  $$ = $1;
+}
+
+resource_option:
+MAX_CONNECTIONS_PER_HOUR INTNUM
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_MAX_CONNECTIONS_PER_HOUR);
+  $$->value_ = $2->value_;
+}
+| MAX_USER_CONNECTIONS INTNUM
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_MAX_USER_CONNECTIONS);
+  $$->value_ = $2->value_;
+}
+/*
+| MAX_QUERIES_PER_HOUR INTNUM
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_MAX_QUERIES_PER_HOUR);
+  $$->value_ = $2->value_;
+}
+| MAX_UPDATES_PER_HOUR INTNUM
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_MAX_UPDATES_PER_HOUR);
+  $$->value_ = $2->value_;
+}
+*/
 ;
 
 tls_option_list:
@@ -9207,6 +9622,12 @@ SET PASSWORD opt_for_user COMP_EQ STRING_VALUE
   ParseNode *require_node = NULL;
   merge_nodes(require_node, result, T_TLS_OPTIONS, $4);
   malloc_non_terminal_node($$, result->malloc_pool_, T_SET_PASSWORD, 4, $3, NULL, NULL, require_node);
+}
+| ALTER USER user_with_host_name WITH resource_option_list
+{
+  ParseNode *res_opt_node = NULL;
+  merge_nodes(res_opt_node, result, T_USER_RESOURCE_OPTIONS, $5);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_SET_PASSWORD, 4, $3, NULL, NULL, res_opt_node);
 }
 ;
 
@@ -10552,13 +10973,6 @@ SET OPTION LEAK_MOD COMP_EQ STRING_VALUE
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_TEMPORARY, 1, $5);
   $$->value_ = 5;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_DUMP_MEMORY, 1, $$);
-}
-|
-SET OPTION LEAK_RATE COMP_EQ INTNUM
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TEMPORARY, 1, $5);
-  $$->value_ = 6;
   malloc_non_terminal_node($$, result->malloc_pool_, T_DUMP_MEMORY, 1, $$);
 }
 |
@@ -12137,6 +12551,10 @@ NAME_OB
 {
   make_name_node($$, result->malloc_pool_, "database");
 }
+| SCHEMA
+{
+  make_name_node($$, result->malloc_pool_, "database");
+}
 | COALESCE
 {
   make_name_node($$, result->malloc_pool_, "coalesce");
@@ -12604,17 +13022,18 @@ ACCOUNT
 |       LEADER
 |       LEAK
 |       LEAK_MOD
-|       LEAK_RATE
 |       LEAVES
 |       LESS
 |       LEVEL
 |       LINESTRING
 |       LIST_
 |       LISTAGG
+|       LN
 |       LOCAL
 |       LOCALITY
 |       LOCKED
 |       LOCKS
+|       LOG
 |       LOGFILE
 |       LOGONLY_REPLICA_NUM
 |       LOGS
