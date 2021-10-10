@@ -207,14 +207,25 @@ public:
 
 protected:
   virtual void set_req_has_wokenup() override;
-  int64_t get_timeout_ts() const;
+  virtual int64_t get_timeout_ts() const;
   virtual void save_request_string() override;
   virtual void generate_sql_id() override;
   virtual uint64_t get_request_checksum() = 0;
 };
 
 
-} // end namespace observer
-} // end namespace oceanbase
+
+template<class T>
+int64_t ObTableRpcProcessor<T>::get_timeout_ts() const
+{
+  int64_t ts = 0;
+  if (NULL != RpcProcessor::rpc_pkt_) {
+    ts = RpcProcessor::get_receive_timestamp() + RpcProcessor::rpc_pkt_->get_timeout();
+  }
+  return ts;
+}
+
+}  // end namespace observer
+}  // end namespace oceanbase
 
 #endif /* _OB_TABLE_RPC_PROCESSOR_H */

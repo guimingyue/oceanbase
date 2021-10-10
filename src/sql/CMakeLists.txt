@@ -222,6 +222,7 @@ ob_set_subtarget(ob_sql engine
   engine/expr/ob_expr_conv.cpp
   engine/expr/ob_expr_convert.cpp
   engine/expr/ob_expr_cosh.cpp
+  engine/expr/ob_expr_crc32.cpp
   engine/expr/ob_expr_timezone.cpp
   engine/expr/ob_expr_tz_offset.cpp
   engine/expr/ob_expr_from_tz.cpp
@@ -278,6 +279,7 @@ ob_set_subtarget(ob_sql engine
   engine/expr/ob_expr_int_div.cpp
   engine/expr/ob_expr_interval.cpp
   engine/expr/ob_expr_ip2int.cpp
+  engine/expr/ob_expr_inet.cpp
   engine/expr/ob_expr_is.cpp
   engine/expr/ob_expr_is_serving_tenant.cpp
   engine/expr/ob_expr_last_exec_id.cpp

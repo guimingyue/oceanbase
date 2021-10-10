@@ -3400,10 +3400,10 @@ static int year_bit(
   if (OB_UNLIKELY(ObYearTC != in.get_type_class() || ObBitTC != ob_obj_type_class(expect_type))) {
     ret = OB_ERR_UNEXPECTED;
     LOG_ERROR("invalid input type", K(ret), K(in), K(expect_type));
-  } else if (OB_FAIL(year_string(ObVarcharType, params, in, tmp_val, cast_mode))) {
-    LOG_WARN("fail to cast datetime to string", K(ret), K(expect_type), K(in), K(tmp_val));
-  } else if (OB_FAIL(string_bit(expect_type, params, tmp_val, out, cast_mode))) {
-    LOG_WARN("fail to cast string to bit", K(ret), K(expect_type), K(in), K(tmp_val));
+  } else if (OB_FAIL(year_int(ObIntType, params, in, tmp_val, cast_mode))) {
+    LOG_WARN("fail to cast datetime to int", K(ret), K(expect_type), K(in), K(tmp_val));
+  } else if (OB_FAIL(int_bit(expect_type, params, tmp_val, out, cast_mode))) {
+    LOG_WARN("fail to cast int to bit", K(ret), K(expect_type), K(in), K(tmp_val));
   }
   return ret;
 }
@@ -4006,7 +4006,8 @@ static int string_enum(const ObExpectType& expect_type, ObObjCastParams& params,
   int32_t no_sp_len = 0;
   ObString no_sp_val;
   ObString in_str;
-  if (OB_UNLIKELY(ObEnumType != expect_type.get_type()) || OB_UNLIKELY(ObStringTC != in.get_type_class()) ||
+  if (OB_UNLIKELY(ObEnumType != expect_type.get_type()) ||
+      OB_UNLIKELY(ObStringTC != in.get_type_class() && ObTextTC != in.get_type_class()) ||
       OB_ISNULL(type_infos = expect_type.get_type_infos())) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(expect_type), K(in), K(ret));
@@ -4022,34 +4023,21 @@ static int string_enum(const ObExpectType& expect_type, ObObjCastParams& params,
     if (OB_FAIL(find_type(*type_infos, cs_type, no_sp_val, pos))) {
       LOG_WARN("fail to find type", KPC(type_infos), K(cs_type), K(no_sp_val), K(in_str), K(pos), K(ret));
     } else if (OB_UNLIKELY(pos < 0)) {
-      if (CM_IS_WARN_ON_FAIL(cast_mode)) {
-        params.warning_ = OB_ERR_DATA_TRUNCATED;
-        value = 0;
-        LOG_INFO("input value out of range, and set out value zero", K(in), K(expect_type));
-      } else {
+      if (!in_str.is_numeric()) {
         ret = OB_ERR_DATA_TRUNCATED;
-        LOG_WARN("input value out of range", K(in), K(expect_type), K(ret));
-        // Bug30666903: check implicit cast logic to handle number cases
-        if (in_str.is_numeric()) {
-          int err = 0;
-          value = ObCharset::strntoull(in_str.ptr(), in_str.length(), 10, &err);
-          if (err == 0) {
-            ret = OB_SUCCESS;
-            uint32_t val_cnt = type_infos->count();
-            if (OB_UNLIKELY(val_cnt <= 0)) {
-              ret = OB_ERR_UNEXPECTED;
-              LOG_WARN("unexpect val_cnt", K(in), K(out), K(expect_type), K(ret));
-            } else if (value > val_cnt) {
-              value = 0;
-              ret = OB_ERR_DATA_TRUNCATED;
-              LOG_WARN("input value out of range", K(in), K(val_cnt), K(ret));
-            }
-            if (OB_FAIL(ret) && CM_IS_WARN_ON_FAIL(cast_mode)) {
-              params.warning_ = OB_ERR_DATA_TRUNCATED;
-              ret = OB_SUCCESS;
-            }
-          }
+      } else {
+        int err = 0;
+        int64_t val_cnt = type_infos->count();
+        value = ObCharset::strntoull(in_str.ptr(), in_str.length(), 10, &err);
+        if (err != 0 || value > val_cnt) {
+          value = 0;
+          ret = OB_ERR_DATA_TRUNCATED;
+          LOG_WARN("input value out of range", K(in), K(val_cnt), K(ret), K(err));
         }
+      }
+      if (OB_FAIL(ret) && CM_IS_WARN_ON_FAIL(cast_mode)) {
+        params.warning_ = OB_ERR_DATA_TRUNCATED;
+        ret = OB_SUCCESS;
       }
     } else {
       value = pos + 1;  // enum start from 1
@@ -4075,7 +4063,8 @@ static int string_set(const ObExpectType& expect_type, ObObjCastParams& params, 
   ObString in_str;
   ObString val_str;
   bool is_last_value = false;
-  if (OB_UNLIKELY(ObSetType != expect_type.get_type()) || OB_UNLIKELY(ObStringTC != in.get_type_class()) ||
+  if (OB_UNLIKELY(ObSetType != expect_type.get_type()) ||
+      OB_UNLIKELY(ObStringTC != in.get_type_class() && ObTextTC != in.get_type_class()) ||
       OB_ISNULL(type_infos = expect_type.get_type_infos()) || !ObCharset::is_valid_collation(cs_type)) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid argument", K(expect_type), K(in), K(cs_type), K(ret));
@@ -4693,8 +4682,8 @@ ObCastEnumOrSetFunc OB_CAST_ENUM_OR_SET[ObMaxTC][2] = {
     },
     {
         /*text -> enum_or_set*/
-        cast_not_support_enum_set, /*enum*/
-        cast_not_support_enum_set, /*set*/
+        string_enum, /*enum*/
+        string_set,  /*set*/
     },
     {
         /*bit -> enum_or_set*/
@@ -8082,10 +8071,12 @@ int obj_collation_check(const bool is_strict_mode, const ObCollationType cs_type
     int64_t well_formed_len = 0;
     if (ob_is_lob_locator(obj.get_type())) {
       if (OB_FAIL(obj.get_string(str))) {
-        STORAGE_LOG(WARN, "Failed to get payload from lob locator", K(ret), K(obj));
+        LOG_WARN("Failed to get payload from lob locator", K(ret), K(obj));
       }
     } else {
-      obj.get_string(str);
+      if (OB_FAIL(obj.get_string(str))) {
+        LOG_WARN("Failed to get payload from string", K(ret), K(obj));
+      }
     }
     if (OB_FAIL(ret)) {
 
@@ -8272,7 +8263,7 @@ int ob_obj_accuracy_check_only(const ObAccuracy& accuracy, const ObCollationType
 }
 
 int ob_obj_to_ob_time_with_date(
-    const ObObj& obj, const ObTimeZoneInfo* tz_info, ObTime& ob_time, bool is_dayofmonth /*false*/)
+    const ObObj& obj, const ObTimeZoneInfo* tz_info, ObTime& ob_time, const int64_t cur_ts_value, bool is_dayofmonth /*false*/)
 {
   int ret = OB_SUCCESS;
   switch (obj.get_type_class()) {
@@ -8296,6 +8287,15 @@ int ob_obj_to_ob_time_with_date(
       break;
     }
     case ObTimeTC: {
+      int64_t datetime_val = 0;
+      if (OB_FAIL(
+              ObTimeConverter::time_to_datetime(obj.get_time(), cur_ts_value, NULL, datetime_val, ObDateTimeType))) {
+        LOG_WARN("time_to_datetime failed", K(ret), K(obj), K(cur_ts_value));
+      } else if (OB_FAIL(ObTimeConverter::datetime_to_ob_time(datetime_val, NULL, ob_time))) {
+        LOG_WARN("datetime to time failed", K(ret));
+      }
+      break;
+
       ret = ObTimeConverter::time_to_ob_time(obj.get_time(), ob_time);
       break;
     }

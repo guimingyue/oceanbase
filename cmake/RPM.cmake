@@ -9,14 +9,16 @@ set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 set(CPACK_RPM_PACKAGE_RELEASE ${OB_RELEASEID})
 set(CPACK_RPM_PACKAGE_RELEASE_DIST ON)
 # RPM package informations.
+set(CPACK_RPM_RELOCATION_PATHS /usr /home/admin/oceanbase)
 set(CPACK_PACKAGING_INSTALL_PREFIX /home/admin/oceanbase)
+list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "/home/admin/oceanbase")
 set(CPACK_PACKAGE_NAME "oceanbase-ce")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "OceanBase CE is a distributed relational database")
 set(CPACK_PACKAGE_VENDOR "Ant Group CO., Ltd.")
-set(CPACK_PACKAGE_VERSION 3.1.0)
+set(CPACK_PACKAGE_VERSION 3.1.1)
 set(CPACK_PACKAGE_VERSION_MAJOR 3)
 set(CPACK_PACKAGE_VERSION_MINOR 1)
-set(CPACK_PACKAGE_VERSION_PATCH 0)
+set(CPACK_PACKAGE_VERSION_PATCH 1)
 set(CPACK_RPM_PACKAGE_GROUP "Applications/Databases")
 set(CPACK_RPM_PACKAGE_URL "https://open.oceanbase.com")
 set(CPACK_RPM_PACKAGE_DESCRIPTION "OceanBase CE is a distributed relational database")
@@ -46,15 +48,19 @@ install(FILES
   DESTINATION etc
   COMPONENT server)
 
-## oceanbase-sql-parser
+## oceanbase-devel
+# liboblog.so and libob_sql_proxy_parser_static.a
 install(PROGRAMS
+  ${CMAKE_BINARY_DIR}/src/liboblog/src/liboblog.so
+  ${CMAKE_BINARY_DIR}/src/liboblog/src/liboblog.so.1
+  ${CMAKE_BINARY_DIR}/src/liboblog/src/liboblog.so.1.0.0
   ${CMAKE_BINARY_DIR}/src/sql/parser/libob_sql_proxy_parser_static.a
   DESTINATION lib
-  COMPONENT sql-parser
-  EXCLUDE_FROM_ALL
-  )
+  COMPONENT devel)
 
 install(FILES
+  src/liboblog/src/liboblog.h
+  deps/oblib/src/lib/ob_errno.h
   deps/oblib/src/common/sql_mode/ob_sql_mode.h
   src/sql/parser/ob_item_type.h
   src/sql/parser/ob_sql_parser.h
@@ -62,9 +68,12 @@ install(FILES
   src/sql/parser/parser_proxy_func.h
   src/sql/parser/parse_node.h
   DESTINATION include
-  COMPONENT sql-parser
-  EXCLUDE_FROM_ALL
-  )
+  COMPONENT devel)
+
+install(PROGRAMS
+  ${CMAKE_BINARY_DIR}/src/liboblog/tests/oblog_tailf
+  DESTINATION bin
+  COMPONENT devel)
 
 ## oceanbase-libs
 install(PROGRAMS
@@ -77,6 +86,18 @@ install(PROGRAMS
   COMPONENT libs
   )
 
+# utils
+install(PROGRAMS
+  ${CMAKE_BINARY_DIR}/tools/ob_admin/ob_admin
+  ${CMAKE_BINARY_DIR}/tools/ob_error/src/ob_error
+  DESTINATION /usr/bin
+  COMPONENT utils
+)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/utils_post.script "/sbin/ldconfig /home/admin/oceanbase/lib")
+set(CPACK_RPM_UTILS_POST_INSTALL_SCRIPT_FILE  ${CMAKE_CURRENT_BINARY_DIR}/utils_post.script)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/utils_postun.script "/sbin/ldconfig")
+set(CPACK_RPM_UTILS_POST_UNINSTALL_SCRIPT_FILE  ${CMAKE_CURRENT_BINARY_DIR}/utils_postun.script)
+
 # install cpack to make everything work
 include(CPack)
 
@@ -84,4 +105,5 @@ include(CPack)
 add_custom_target(rpm
   COMMAND +make package
   DEPENDS
-  observer ob_sql_proxy_parser_static)
+  observer ob_admin ob_error
+  ob_sql_proxy_parser_static)

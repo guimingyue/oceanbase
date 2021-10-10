@@ -2268,6 +2268,36 @@ int ObLogEngine::delete_all_clog_files()
   return ret;
 }
 
+int ObLogEngine::check_clog_exist(const common::ObPartitionKey &partition_key,
+    const uint64_t log_id,
+    bool &exist)
+{
+  int ret = OB_SUCCESS;
+  ObLogCursorExt log_cursor;
+  exist = false;
+  if (!is_inited_) {
+    ret = OB_NOT_INIT;
+    CLOG_LOG(WARN, "not init", K(ret));
+  } else if (OB_UNLIKELY(OB_INVALID_ID == log_id)) {
+    ret = OB_INVALID_ARGUMENT;
+    CLOG_LOG(WARN, "invalid argument", K(ret), K(log_id), K(partition_key));
+  } else if (OB_FAIL(get_cursor(partition_key, log_id, log_cursor))) {
+    if (OB_NEED_RETRY == ret) {
+      ret = OB_EAGAIN;
+    } else if (OB_ERR_OUT_OF_LOWER_BOUND == ret) {
+      CLOG_LOG(WARN, "log not exist, may be recycled", K(ret), K(log_id), K(partition_key));
+      ret = OB_SUCCESS;
+    } else {
+      CLOG_LOG(WARN, "log not exist", K(ret), K(log_id), K(partition_key));
+      ret = OB_SUCCESS;
+    }
+  } else if (OB_FAIL(clog_env_.get_log_file_store()->exist(log_cursor.get_file_id(), exist))) {
+    // return ret
+    CLOG_LOG(WARN, "check file exist failed", K(ret), K(log_id), K(partition_key));
+  }
+  return ret;
+}
+
 // ================== interface for ObIlogStorage begin====================
 int ObLogEngine::get_cursor_batch(
     const common::ObPartitionKey& pkey, const uint64_t query_log_id, ObGetCursorResult& result)
@@ -2553,16 +2583,16 @@ int ObLogEngine::get_ilog_using_disk_space(int64_t& space) const
   return ret;
 }
 
-bool ObLogEngine::is_clog_disk_error() const
+bool ObLogEngine::is_clog_disk_hang() const
 {
-  bool is_disk_error = false;
-  const ObCommitLogEnv* env = get_clog_env_();
+  bool is_disk_hang = false;
+  const ObCommitLogEnv *env = get_clog_env_();
   if (IS_NOT_INIT) {
-    is_disk_error = false;
+    is_disk_hang = false;
   } else if (OB_LIKELY(NULL != env)) {
-    is_disk_error = (env->get_writer()).is_disk_error();
+    is_disk_hang = (env->get_writer()).is_disk_hang();
   }
-  return is_disk_error;
+  return is_disk_hang;
 }
 
 NetworkLimitManager::NetworkLimitManager() : is_inited_(false), addr_array_(), ethernet_speed_(0), hash_map_()
