@@ -4507,23 +4507,30 @@ int ObSelectResolver::resolve_column_ref_in_group_by(const ObQualifiedName& q_na
     LOG_WARN("select stmt is null");
   } else if (!is_oracle_mode() && q_name.parent_aggr_level_ < current_level_) {
     // the column don't located in aggregate function in having clause
-    for (int64_t i = 0; OB_SUCC(ret) && i < select_stmt->get_group_expr_size(); ++i) {
+    // resolve column refs from group by and rollup exprs
+    ObSEArray<ObRawExpr *, 16> group_and_rollup_exprs;
+    if (OB_FAIL(append(group_and_rollup_exprs, select_stmt->get_group_exprs()))) {
+      LOG_WARN("failed to append group exprs", K(ret));
+    } else if (OB_FAIL(append(group_and_rollup_exprs, select_stmt->get_rollup_exprs()))) {
+      LOG_WARN("failed to append rollup exprs", K(ret));
+    }
+    for (int64_t i = 0; OB_SUCC(ret) && i < group_and_rollup_exprs.count(); ++i) {
       bool is_hit = false;
-      ObRawExpr* group_expr = NULL;
-      ObColumnRefRawExpr* col_ref = NULL;
-      if (OB_ISNULL(group_expr = select_stmt->get_group_exprs().at(i))) {
+      ObRawExpr *expr = NULL;
+      ObColumnRefRawExpr *col_ref = NULL;
+      if (OB_ISNULL(expr = group_and_rollup_exprs.at(i))) {
         ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("group expr is null");
-      } else if (group_expr->is_column_ref_expr()) {
-        col_ref = static_cast<ObColumnRefRawExpr*>(group_expr);
-        if (OB_FAIL(ObResolverUtils::check_column_name(session_info_, q_name, *col_ref, is_hit))) {
-          LOG_WARN("check column name failed", K(ret), K(q_name));
-        } else if (is_hit) {
-          if (NULL == real_ref_expr) {
-            real_ref_expr = col_ref;
-          } else if (real_ref_expr != col_ref) {
-            ret = OB_NON_UNIQ_ERROR;
-          }
+        LOG_WARN("expr is null", K(ret));
+      } else if (!expr->is_column_ref_expr()) {
+        // do nothing
+      } else if (OB_FALSE_IT(col_ref = static_cast<ObColumnRefRawExpr *>(expr))) {
+      } else if (OB_FAIL(ObResolverUtils::check_column_name(session_info_, q_name, *col_ref, is_hit))) {
+        LOG_WARN("check column name failed", K(ret), K(q_name));
+      } else if (is_hit) {
+        if (OB_ISNULL(real_ref_expr)) {
+          real_ref_expr = col_ref;
+        } else if (real_ref_expr != col_ref) {
+          ret = OB_NON_UNIQ_ERROR;
         }
       }
     }
@@ -4834,8 +4841,14 @@ inline bool ObSelectResolver::column_need_check_group_by(const ObQualifiedName& 
 int ObSelectResolver::wrap_alias_column_ref(const ObQualifiedName& q_name, ObRawExpr*& real_ref_expr)
 {
   int ret = OB_SUCCESS;
-  if (q_name.parent_aggr_level_ >= 0 && current_level_ <= q_name.parent_aggr_level_) {
-    ObAliasRefRawExpr* alias_expr = NULL;
+  // aggr in window function isn't used to wrap column ref, just only expand alias column, and do
+  // wrap alias column ref is used to help analyze aggregate pullup for alias column in aggr. the
+  // other situation should expand alias column directly.
+  // eg: select sum(t1.c1) from t1 order by (select sum(t1.c1) from t2);
+  // sum(t1.c1) in subquery is from parent stmt.
+  if (!q_name.parents_expr_info_.has_member(IS_WINDOW_FUNC) && q_name.parent_aggr_level_ >= 0 &&
+      current_level_ <= q_name.parent_aggr_level_) {
+    ObAliasRefRawExpr *alias_expr = NULL;
     if (OB_FAIL(ObRawExprUtils::build_alias_column_expr(
             *params_.expr_factory_, real_ref_expr, current_level_, alias_expr))) {
       LOG_WARN("build alias column expr failed", K(ret));

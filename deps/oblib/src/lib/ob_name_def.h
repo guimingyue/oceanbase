@@ -117,6 +117,7 @@
 #define N_NUM "num"
 #define N_SINH "sinh"
 #define N_COSH "cosh"
+#define N_DEGREES "degrees"
 #define N_TANH "tanh"
 #define N_RADIANS "radians"
 #define N_IS_JOIN "is_join"
@@ -865,6 +866,7 @@
 
 #define N_TO_SINGLE_BYTE "to_single_byte"
 #define N_TO_MULTI_BYTE "to_multi_byte"
+#define N_WEIGHT_STRING "weight_string"
 
 #define N_TO_NCHAR "to_nchar"
 #define N_LNNVL "lnnvl"
