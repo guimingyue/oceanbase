@@ -278,7 +278,7 @@ END_P SET_VAR DELIMITER
         STATS_PERSISTENT STATS_SAMPLE_PAGES STATUS STATEMENTS STD STDDEV STDDEV_POP STDDEV_SAMP STRONG
         SYNCHRONIZATION STOP STORAGE STORAGE_FORMAT_VERSION STORAGE_FORMAT_WORK_VERSION STORING STRING
         SUBCLASS_ORIGIN SUBDATE SUBJECT SUBPARTITION SUBPARTITIONS SUBSTR SUBSTRING SUCCESSFUL SUM
-        SUPER SUSPEND SWAPS SWITCH SWITCHES SWITCHOVER SYSTEM SYSTEM_USER SYSDATE SESSION_ALIAS SYNONYM
+        SUPER SUSPEND SWAPS SWITCH SWITCHES SWITCHOVER SYSTEM SYSTEM_USER SYSDATE SESSION_ALIAS
         SIZE
 
         TABLE_CHECKSUM TABLE_MODE TABLE_ID TABLE_NAME TABLEGROUPS TABLES TABLESPACE TABLET TABLET_MAX_SIZE
@@ -304,7 +304,7 @@ END_P SET_VAR DELIMITER
 %type <node> select_stmt update_stmt delete_stmt
 %type <node> insert_stmt single_table_insert values_clause dml_table_name
 %type <node> create_table_stmt create_table_like_stmt opt_table_option_list table_option_list table_option table_option_list_space_seperated create_function_stmt drop_function_stmt parallel_option
-%type <node> create_synonym_stmt drop_synonym_stmt opt_public opt_force synonym_name synonym_object opt_dlink
+%type <node> opt_force
 %type <node> create_database_stmt drop_database_stmt alter_database_stmt use_database_stmt
 %type <node> opt_database_name database_option database_option_list opt_database_option_list database_factor
 %type <node> create_tenant_stmt opt_tenant_option_list alter_tenant_stmt drop_tenant_stmt
@@ -401,7 +401,6 @@ END_P SET_VAR DELIMITER
 %type <node> zone_action upgrade_action
 %type <node> opt_index_name opt_key_or_index opt_index_options opt_primary  opt_all
 %type <node> charset_key database_key charset_name charset_name_or_default collation_name databases_or_schemas trans_param_name trans_param_value
-%type <node> set_names_stmt set_charset_stmt
 %type <node> charset_introducer complex_string_literal literal number_literal now_or_signed_literal signed_literal
 %type <node> create_tablegroup_stmt drop_tablegroup_stmt alter_tablegroup_stmt default_tablegroup
 %type <node> set_transaction_stmt transaction_characteristics transaction_access_mode isolation_level
@@ -520,16 +519,12 @@ stmt:
   | create_resource_stmt    { $$ = $1; check_question_mark($$, result); }
   | alter_resource_stmt     { $$ = $1; check_question_mark($$, result); }
   | drop_resource_stmt      { $$ = $1; check_question_mark($$, result); }
-  | set_names_stmt          { $$ = $1; check_question_mark($$, result); }
-  | set_charset_stmt        { $$ = $1; check_question_mark($$, result); }
   | create_tablegroup_stmt  { $$ = $1; check_question_mark($$, result); }
   | drop_tablegroup_stmt    { $$ = $1; check_question_mark($$, result); }
   | alter_tablegroup_stmt   { $$ = $1; check_question_mark($$, result); }
   | rename_table_stmt       { $$ = $1; check_question_mark($$, result); }
   | truncate_table_stmt     { $$ = $1; check_question_mark($$, result); }
   | set_transaction_stmt    { $$ = $1; check_question_mark($$, result); }
-  | create_synonym_stmt     { $$ = $1; check_question_mark($$, result); }
-  | drop_synonym_stmt       { $$ = $1; check_question_mark($$, result); }
   | create_savepoint_stmt   { $$ = $1; check_question_mark($$, result); }
   | rollback_savepoint_stmt { $$ = $1; check_question_mark($$, result); }
   | release_savepoint_stmt  { $$ = $1; check_question_mark($$, result); }
@@ -2203,6 +2198,13 @@ MOD '(' expr ',' expr ')'
   make_name_node($$, result->malloc_pool_, "date");
   malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
 }
+| DAY '(' expr ')'
+{
+  ParseNode *params = NULL;
+  malloc_non_terminal_node(params, result->malloc_pool_, T_EXPR_LIST, 1, $3);
+  make_name_node($$, result->malloc_pool_, "day");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FUN_SYS, 2, $$, params);
+}
 | YEAR '(' expr ')'
 {
   ParseNode *params = NULL;
@@ -3808,142 +3810,6 @@ use_database_stmt:
 USE database_factor
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_USE_DATABASE, 1, $2);
-}
-;
-
-/*****************************************************************************
- *
- *	create synonym grammar
- *
- *****************************************************************************/
-
-create_synonym_stmt:
-CREATE opt_replace opt_public SYNONYM  synonym_name FOR synonym_object opt_dlink
-{
-  malloc_non_terminal_node($$,
-                           result->malloc_pool_,
-                           T_CREATE_SYNONYM,
-                           7,
-                           $2,                   /*or replace*/
-                           $3,                   /* public */
-                           NULL,                 /* opt schema name */
-                           $5,                   /* synonym name */
-                           NULL,                   /* opt schema name */
-                           $7,                   /* synonym object */
-                           $8);                  /* partition optition */
-}
-;
-
-| CREATE opt_replace opt_public SYNONYM database_factor '.' synonym_name FOR synonym_object opt_dlink
-{
-  malloc_non_terminal_node($$,
-                           result->malloc_pool_,
-                           T_CREATE_SYNONYM,
-                           7,
-                           $2,                   /*or replace*/
-                           $3,                   /* public */
-                           $5,                   /* opt schema name */
-                           $7,                   /* synonym name */
-                           NULL,                   /* opt schema name */
-                           $9,                   /* synonym object */
-                           $10);                  /* partition optition */
-}
-;
-
-| CREATE opt_replace opt_public SYNONYM  synonym_name FOR database_factor '.' synonym_object opt_dlink
-{
-  malloc_non_terminal_node($$,
-                           result->malloc_pool_,
-                           T_CREATE_SYNONYM,
-                           7,
-                           $2,                   /*or replace*/
-                           $3,                   /* public */
-                           NULL,                 /* opt schema name */
-                           $5,                   /* synonym name */
-                           $7,                   /* opt schema name */
-                           $9,                   /* synonym object */
-                           $10);                  /* partition optition */
-}
-;
-| CREATE opt_replace opt_public SYNONYM  database_factor '.' synonym_name FOR database_factor '.' synonym_object opt_dlink
-{
-  malloc_non_terminal_node($$,
-                           result->malloc_pool_,
-                           T_CREATE_SYNONYM,
-                           7,
-                           $2,                   /*or replace*/
-                           $3,                   /* public */
-                           $5,                 /* opt schema name */
-                           $7,                   /* synonym name */
-                           $9,                   /* opt schema name */
-                           $11,                   /* synonym object */
-                           $12);                  /* partition optition */
-}
-;
-
-opt_public:
-PUBLIC
-{
-  malloc_terminal_node($$, result->malloc_pool_, T_PUBLIC); }
-| /* EMPTY */
-{ $$ = NULL; }
-;
-
-
-synonym_name:
-NAME_OB
-{ $$ = $1; }
-| unreserved_keyword
-{
-  get_non_reserved_node($$, result->malloc_pool_, @1.first_column, @1.last_column);
-}
-;
-
-opt_dlink:
-'@' ip_port
-{
-  $$ = $2;}
-| /* EMPTY */
-{ $$ = NULL; }
-;
-
-synonym_object:
-NAME_OB
-{ $$ = $1; }
-| unreserved_keyword
-{
-  get_non_reserved_node($$, result->malloc_pool_, @1.first_column, @1.last_column);
-}
-;
-
-/*****************************************************************************
- *
- *      DROP SYNONYM grammar
- *
- *****************************************************************************/
-drop_synonym_stmt:
-DROP opt_public SYNONYM synonym_name opt_force
-{
-  malloc_non_terminal_node($$,
-                           result->malloc_pool_,
-                           T_DROP_SYNONYM,
-                           4,
-                           $2,                   /*opt public*/
-                           NULL,                   /* opt schema name */
-                           $4,                   /* synonym name */
-                           $5);                  /* opt force */
-}
-;
-| DROP opt_public SYNONYM database_factor '.' synonym_name opt_force
-{
-  malloc_non_terminal_node($$,
-                           result->malloc_pool_,
-                           T_DROP_SYNONYM,
-                           4,
-                           $2,                   /*opt public*/
-                           $4,                   /* opt schema name */
-                           $6,                   /* synonym name */
-                           $7);                  /* opt force */
 }
 ;
 
@@ -10454,11 +10320,6 @@ ALTER
   malloc_terminal_node($$, result->malloc_pool_, T_PRIV_TYPE);
   $$->value_ = 0;
 }
-| CREATE SYNONYM
-{
-  malloc_terminal_node($$, result->malloc_pool_, T_PRIV_TYPE);
-  $$->value_ = OB_PRIV_CREATE_SYNONYM;
-}
 | FILEX
 {
   malloc_terminal_node($$, result->malloc_pool_, T_PRIV_TYPE);
@@ -10717,6 +10578,15 @@ USER_VARIABLE to_or_eq expr
   }
   malloc_non_terminal_node($$, result->malloc_pool_, T_VAR_VAL, 2, $1, $3);
   $$->value_ = 2;
+}
+| NAMES charset_name_or_default opt_collation
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_SET_NAMES, 2, $2, $3);
+}
+| charset_key charset_name_or_default
+{
+  (void)($1);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_SET_CHARSET, 1, $2);
 }
 ;
 
@@ -13022,23 +12892,6 @@ BEGI
 }
 ;
 
-////////////////////////////////////////////////////////////////
-/* SET NAMES 'charset_name' [COLLATE 'collation_name'] */
-set_names_stmt:
-SET NAMES charset_name_or_default opt_collation
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_SET_NAMES, 2, $3, $4);
-};
-
-////////////////////////////////////////////////////////////////
-/* SET CHARACTER SET charset_name */
-set_charset_stmt:
-SET charset_key charset_name_or_default
-{
-  (void)($2);
-  malloc_non_terminal_node($$, result->malloc_pool_, T_SET_CHARSET, 1, $3);
-};
-
 //////////////////////////////
 set_transaction_stmt:
 SET TRANSACTION transaction_characteristics
@@ -13998,7 +13851,6 @@ ACCOUNT
 |       SYSTEM
 |       SYSTEM_USER
 |       SYSDATE
-|       SYNONYM
 |       TABLE_CHECKSUM
 |       TABLE_MODE
 |       TABLEGROUPS

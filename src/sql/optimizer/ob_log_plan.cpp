@@ -305,7 +305,7 @@ int64_t ObLogPlan::to_string(char* buf, const int64_t buf_len, ExplainType type)
       } else if (OB_FAIL(BUF_PRINTF(NEW_LINE))) {                                  /* Do nothing */
       } else if (OB_FAIL(BUF_PRINTF("-------------------------------------\n"))) { /* Do nothing */
       } else if (OB_FAIL(print_outline(plan))) {
-        databuff_printf(buf, buf_len, pos, "WARN failed to print outlien, ret=%d", ret);
+        databuff_printf(buf, buf_len, pos, "WARN failed to print outline, ret=%d", ret);
       } else {
         ret = BUF_PRINTF(NEW_LINE);
       }
@@ -320,7 +320,7 @@ int64_t ObLogPlan::to_string(char* buf, const int64_t buf_len, ExplainType type)
       } else if (OB_FAIL(BUF_PRINTF(NEW_LINE))) {                                  /* Do nothing */
       } else if (OB_FAIL(BUF_PRINTF("-------------------------------------\n"))) { /* Do nothing */
       } else if (OB_FAIL(print_outline(plan))) {
-        databuff_printf(buf, buf_len, pos, "WARN failed to print outlien, ret=%d", ret);
+        databuff_printf(buf, buf_len, pos, "WARN failed to print outline, ret=%d", ret);
       } else {
         ret = BUF_PRINTF(NEW_LINE);
       }
@@ -7250,8 +7250,6 @@ int ObLogPlan::check_enable_plan_expiration(bool& enable) const
     LOG_WARN("stmt is null", K(ret));
   } else if (!get_stmt()->is_select_stmt()) {
     // do nothing
-  } else if (get_phy_plan_type() != OB_PHY_PLAN_LOCAL && get_phy_plan_type() != OB_PHY_PLAN_REMOTE) {
-    // do nothing
   } else if (OB_FAIL(session->get_adaptive_cursor_sharing(use_acs))) {
     LOG_WARN("failed to check is acs enabled", K(ret));
   } else if (use_acs) {
@@ -7260,21 +7258,10 @@ int ObLogPlan::check_enable_plan_expiration(bool& enable) const
     LOG_WARN("failed to check is spm enabled", K(ret));
   } else if (use_spm) {
     // do nothing
+  } else if (get_phy_plan_type() != OB_PHY_PLAN_LOCAL && get_phy_plan_type() != OB_PHY_PLAN_DISTRIBUTED) {
+    // do nothing
   } else {
-    const ObLogicalOperator* node = root_;
-    while (OB_SUCC(ret)) {
-      if (OB_ISNULL(node)) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("node is null", K(ret));
-      } else if (node->get_num_of_child() == 1) {
-        node = node->get_child(ObLogicalOperator::first_child);
-      } else {
-        break;
-      }
-    }
-    if (OB_SUCC(ret) && node->is_table_scan()) {
-      enable = (static_cast<const ObLogTableScan*>(node)->get_diverse_path_count() >= 2);
-    }
+    enable = true;
   }
   return ret;
 }

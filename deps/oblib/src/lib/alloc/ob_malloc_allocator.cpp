@@ -298,6 +298,7 @@ int ObMallocAllocator::create_tenant_ctx_allocator(uint64_t tenant_id, uint64_t 
               ObTenantCtxAllocator* next_allocator = *cur;
               *cur = allocator;
               ((*cur)->get_next()) = next_allocator;
+              LOG_INFO("tenant ctx allocator was created", K(tenant_id), K(ctx_id), K(lbt()));
             } else {
               allocator->~ObTenantCtxAllocator();
               allocer->free(buf);
@@ -417,6 +418,16 @@ int64_t ObMallocAllocator::get_tenant_hold(uint64_t tenant_id)
     return OB_SUCCESS;
   });
   return hold;
+}
+
+int64_t ObMallocAllocator::get_tenant_remain(uint64_t tenant_id)
+{
+  int64_t remain = 0;
+  with_resource_handle_invoke(tenant_id, [&remain](ObTenantMemoryMgr *mgr) {
+    remain = mgr->get_limit() - mgr->get_sum_hold() + mgr->get_cache_hold();
+    return OB_SUCCESS;
+  });
+  return remain;
 }
 
 int64_t ObMallocAllocator::get_tenant_rpc_hold(uint64_t tenant_id)
