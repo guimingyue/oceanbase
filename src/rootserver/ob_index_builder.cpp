@@ -882,11 +882,15 @@ int ObRSBuildIndexTask::calc_snapshot_version(const int64_t max_commit_version, 
   }
   if (OB_FAIL(ret)) {
     // nothing todo
-  } else if (OB_FAIL(ddl_service_->get_freeze_info_mgr().get_freeze_info(0L /*latest version*/, frozen_status))) {
-    LOG_WARN("fail to get freeze info", K(ret));
   } else {
+    int tmp_ret = OB_SUCCESS;
+    if (OB_SUCCESS !=
+        (tmp_ret = ddl_service_->get_freeze_info_mgr().get_freeze_info(0L /*latest version*/, frozen_status))) {
+      LOG_WARN("fail to get freeze info", K(tmp_ret));
+    } else {
+      freeze_snapshot_version = frozen_status.frozen_timestamp_;
+    }
     const int64_t current_time = ObTimeUtility::current_time();
-    freeze_snapshot_version = frozen_status.frozen_timestamp_;
     snapshot_version = std::max(max_commit_version, gc_snapshot_version);
     snapshot_version = std::max(snapshot_version, freeze_snapshot_version);
     // we expected that the snapshot value is not far from the current timestamp
@@ -1335,13 +1339,12 @@ int ObIndexBuilder::submit_build_global_index_task(const ObTableSchema& index_sc
     // submit retry task if retryable, otherwise report error
     if (OB_EAGAIN == ret || OB_ALLOCATE_MEMORY_FAILED == ret) {
       int record_ret = ret;
-      if (OB_FAIL(GCTX.ob_service_->submit_retry_ghost_index_task(inner_index_schema->get_table_id()))) {
+      if (OB_FAIL(GCTX.ob_service_->submit_retry_ghost_index_task(index_schema.get_table_id()))) {
         LOG_WARN("fail to submit retry ghost index task", K(ret));
         ret = OB_TIMEOUT;
       } else {
-        LOG_INFO("submit build global index task fail but fast retryable",
-            K(record_ret),
-            K(inner_index_schema->get_table_id()));
+        LOG_INFO(
+            "submit build global index task fail but fast retryable", K(record_ret), K(index_schema.get_table_id()));
       }
     } else if (OB_FAIL(ret)) {
       LOG_WARN("submit global index task fail, mark it as timeout", K(ret));
@@ -1670,6 +1673,10 @@ int ObIndexBuilder::generate_schema(const ObCreateIndexArg& arg, const int64_t f
           ret = OB_ERR_WRONG_KEY_COLUMN;
           LOG_USER_ERROR(OB_ERR_WRONG_KEY_COLUMN, sort_item.column_name_.length(), sort_item.column_name_.ptr());
           LOG_WARN("fulltext index created on blob column is not supported", K(arg.index_type_), K(ret));
+        } else if (ob_is_json_tc(data_column->get_data_type())) {
+          ret = OB_ERR_JSON_USED_AS_KEY;
+          LOG_USER_ERROR(OB_ERR_JSON_USED_AS_KEY, sort_item.column_name_.length(), sort_item.column_name_.ptr());
+          LOG_WARN("JSON column cannot be used in key specification.", K(arg.index_type_), K(ret));
         } else if (data_column->is_string_type()) {
           int64_t length = 0;
           if (data_column->is_fulltext_column()) {

@@ -238,6 +238,7 @@ constexpr int OB_DISK_ERROR = -4375;
 constexpr int OB_UNIMPLEMENTED_FEATURE = -4376;
 constexpr int OB_ERR_DEFENSIVE_CHECK = -4377;
 constexpr int OB_CLUSTER_NAME_HASH_CONFLICT = -4378;
+constexpr int OB_STACK_OVERFLOW = -4385;
 constexpr int OB_IMPORT_NOT_IN_SERVER = -4505;
 constexpr int OB_CONVERT_ERROR = -4507;
 constexpr int OB_BYPASS_TIMEOUT = -4510;
@@ -1036,6 +1037,9 @@ constexpr int OB_ERR_ILL_NAME_STRING = -5932;
 constexpr int OB_ERR_INCORRECT_VALUE_FOR_FUNCTION = -5936;
 constexpr int OB_ERR_USER_EXCEED_RESOURCE = -5967;
 constexpr int OB_ERR_CTE_NEED_QUERY_BLOCKS = -5976;
+constexpr int OB_ERR_WINDOW_ROWS_INTERVAL_USE = -5983;
+constexpr int OB_ERR_WINDOW_RANGE_FRAME_ORDER_TYPE = -5984;
+constexpr int OB_ERR_WINDOW_ILLEGAL_ORDER_BY = -5985;
 constexpr int OB_TRANSACTION_SET_VIOLATION = -6001;
 constexpr int OB_TRANS_ROLLBACKED = -6002;
 constexpr int OB_ERR_EXCLUSIVE_LOCK_CONFLICT = -6003;
@@ -1420,7 +1424,7 @@ constexpr int OB_ERR_INVALID_DATE_MSG_FMT_V2 = -4219;
 #define OB_CURL_ERROR__USER_ERROR_MSG "curl error"
 #define OB_MAJOR_FREEZE_NOT_ALLOW__USER_ERROR_MSG "%s"
 #define OB_PREPARE_FREEZE_FAILED__USER_ERROR_MSG "prepare freeze failed"
-#define OB_INVALID_DATE_VALUE__USER_ERROR_MSG "Incorrect datetime value: '%s' for column '%s'"
+#define OB_INVALID_DATE_VALUE__USER_ERROR_MSG "Incorrect datetime value: '%.*s' for column '%s'"
 #define OB_INACTIVE_SQL_CLIENT__USER_ERROR_MSG "Inactive sql client, only read allowed"
 #define OB_INACTIVE_RPC_PROXY__USER_ERROR_MSG "Inactive rpc proxy, can not send RPC request"
 #define OB_INTERVAL_WITH_MONTH__USER_ERROR_MSG "Interval with year or month can not be converted to microseconds"
@@ -1569,6 +1573,7 @@ constexpr int OB_ERR_INVALID_DATE_MSG_FMT_V2 = -4219;
 #define OB_UNIMPLEMENTED_FEATURE__USER_ERROR_MSG "unimplemented feature"
 #define OB_ERR_DEFENSIVE_CHECK__USER_ERROR_MSG "fatal internal error in [%.*s]"
 #define OB_CLUSTER_NAME_HASH_CONFLICT__USER_ERROR_MSG "cluster name conflict"
+#define OB_STACK_OVERFLOW__USER_ERROR_MSG "stack overflow"
 #define OB_IMPORT_NOT_IN_SERVER__USER_ERROR_MSG "Import not in service"
 #define OB_CONVERT_ERROR__USER_ERROR_MSG "Convert error"
 #define OB_BYPASS_TIMEOUT__USER_ERROR_MSG "Bypass timeout"
@@ -2067,6 +2072,29 @@ constexpr int OB_ERR_INVALID_DATE_MSG_FMT_V2 = -4219;
 #define OB_ERR_CANNOT_GRANT_STRING_TO_A_ROLE__USER_ERROR_MSG "cannot grant %.*s to a role"
 #define OB_ERR_CASCADE_CONSTRAINTS_MUST_BE_SPECIFIED_TO_PERFORM_THIS_REVOKE__USER_ERROR_MSG "CASCADE CONSTRAINTS must be specified to perform this revoke"
 #define OB_ERR_YOU_MAY_NOT_REVOKE_PRIVILEGES_FROM_YOURSELF__USER_ERROR_MSG "you may not GRANT/REVOKE privileges to/from yourself"
+#define OB_ERR_INVALID_JSON_TEXT__USER_ERROR_MSG "Invalid JSON text."
+#define OB_ERR_INVALID_JSON_TEXT_IN_PARAM__USER_ERROR_MSG "Invalid JSON text in argument."
+#define OB_ERR_INVALID_JSON_BINARY_DATA__USER_ERROR_MSG "The JSON binary value contains invalid data."
+#define OB_ERR_INVALID_JSON_PATH__USER_ERROR_MSG "Invalid JSON path expression."
+#define OB_ERR_INVALID_JSON_CHARSET__USER_ERROR_MSG "Cannot create a JSON value from a string."
+#define OB_ERR_INVALID_JSON_CHARSET_IN_FUNCTION__USER_ERROR_MSG "Invalid JSON character data provided to function."
+#define OB_ERR_INVALID_TYPE_FOR_JSON__USER_ERROR_MSG "Invalid data type for JSON data in argument %u to function %s; a JSON string or JSON type is required."
+#define OB_ERR_INVALID_CAST_TO_JSON__USER_ERROR_MSG "Cannot CAST value to JSON."
+#define OB_ERR_INVALID_JSON_PATH_CHARSET__USER_ERROR_MSG "A path expression must be encoded in the utf8 character set."
+#define OB_ERR_INVALID_JSON_PATH_WILDCARD__USER_ERROR_MSG "In this situation, path expressions may not contain the * and ** tokens."
+#define OB_ERR_JSON_VALUE_TOO_BIG__USER_ERROR_MSG "The JSON value is too big to be stored in a JSON column."
+#define OB_ERR_JSON_KEY_TOO_BIG__USER_ERROR_MSG "The JSON object contains a key name that is too long."
+#define OB_ERR_JSON_USED_AS_KEY__USER_ERROR_MSG "JSON column '%.*s' cannot be used in key specification."
+#define OB_ERR_JSON_VACUOUS_PATH__USER_ERROR_MSG "The path expression is not allowed in this context."
+#define OB_ERR_JSON_BAD_ONE_OR_ALL_ARG__USER_ERROR_MSG "The oneOrAll argument may take these values: \'one\' or \'all\'."
+#define OB_ERR_NUMERIC_JSON_VALUE_OUT_OF_RANGE__USER_ERROR_MSG "Out of range JSON value for CAST"
+#define OB_ERR_INVALID_JSON_VALUE_FOR_CAST__USER_ERROR_MSG "Invalid JSON value for CAST"
+#define OB_ERR_JSON_OUT_OF_DEPTH__USER_ERROR_MSG "The JSON document exceeds the maximum depth."
+#define OB_ERR_JSON_DOCUMENT_NULL_KEY__USER_ERROR_MSG "JSON documents may not contain NULL member names."
+#define OB_ERR_BLOB_CANT_HAVE_DEFAULT__USER_ERROR_MSG "BLOB, TEXT, GEOMETRY or JSON column '%.*s' can't have a default value"
+#define OB_ERR_INVALID_JSON_PATH_ARRAY_CELL__USER_ERROR_MSG "A path expression is not a path to a cell in an array"
+#define OB_ERR_MISSING_JSON_VALUE__USER_ERROR_MSG "No value was found by '%.192s' on the specified path."
+#define OB_ERR_MULTIPLE_JSON_VALUES__USER_ERROR_MSG "More than one value was found by '%.192s' on the specified path."
 #define OB_ERR_SP_ALREADY_EXISTS__USER_ERROR_MSG "%s %.*s already exists"
 #define OB_ERR_SP_DOES_NOT_EXIST__USER_ERROR_MSG "%s %.*s.%.*s does not exist"
 #define OB_ERR_SP_UNDECLARED_VAR__USER_ERROR_MSG "Undeclared variable: %.*s"
@@ -2448,6 +2476,9 @@ constexpr int OB_ERR_INVALID_DATE_MSG_FMT_V2 = -4219;
 #define OB_ERR_INCORRECT_VALUE_FOR_FUNCTION__USER_ERROR_MSG "Incorrect %.*s value: '%.*s' for function %.*s"
 #define OB_ERR_USER_EXCEED_RESOURCE__USER_ERROR_MSG "User '%.*s' has exceeded the '%s' resource (current value: %lu)"
 #define OB_ERR_CTE_NEED_QUERY_BLOCKS__USER_ERROR_MSG "Recursive Common Table Expression should have one or more non-recursive query blocks followed by one or more recursive ones: %s"
+#define OB_ERR_WINDOW_ROWS_INTERVAL_USE__USER_ERROR_MSG "Window '%s': INTERVAL can only be used with RANGE frames."
+#define OB_ERR_WINDOW_RANGE_FRAME_ORDER_TYPE__USER_ERROR_MSG "Window '%s' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression of numeric or temporal type"
+#define OB_ERR_WINDOW_ILLEGAL_ORDER_BY__USER_ERROR_MSG "Window '%s': ORDER BY or PARTITION BY uses legacy position indication which is not supported, use expression."
 #define OB_TRANSACTION_SET_VIOLATION__USER_ERROR_MSG "Transaction set changed during the execution"
 #define OB_TRANS_ROLLBACKED__USER_ERROR_MSG "transaction is rolled back"
 #define OB_ERR_EXCLUSIVE_LOCK_CONFLICT__USER_ERROR_MSG "Lock wait timeout exceeded; try restarting transaction"
@@ -2851,7 +2882,7 @@ constexpr int OB_ERR_INVALID_DATE_MSG_FMT_V2 = -4219;
 #define OB_CURL_ERROR__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4216, curl error"
 #define OB_MAJOR_FREEZE_NOT_ALLOW__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4217, %s"
 #define OB_PREPARE_FREEZE_FAILED__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4218, prepare freeze failed"
-#define OB_INVALID_DATE_VALUE__ORA_USER_ERROR_MSG "ORA-01861: literal does not match format string: '%s' for column '%s'"
+#define OB_INVALID_DATE_VALUE__ORA_USER_ERROR_MSG "ORA-01861: literal does not match format string: '%.*s' for column '%s'"
 #define OB_INACTIVE_SQL_CLIENT__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4220, Inactive sql client, only read allowed"
 #define OB_INACTIVE_RPC_PROXY__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4221, Inactive rpc proxy, can not send RPC request"
 #define OB_INTERVAL_WITH_MONTH__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4222, Interval with year or month can not be converted to microseconds"
@@ -3000,6 +3031,7 @@ constexpr int OB_ERR_INVALID_DATE_MSG_FMT_V2 = -4219;
 #define OB_UNIMPLEMENTED_FEATURE__ORA_USER_ERROR_MSG "ORA-03001: unimplemented feature"
 #define OB_ERR_DEFENSIVE_CHECK__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4377, fatal internal error in [%.*s]"
 #define OB_CLUSTER_NAME_HASH_CONFLICT__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4378, cluster name conflict"
+#define OB_STACK_OVERFLOW__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4385, stack overflow"
 #define OB_IMPORT_NOT_IN_SERVER__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4505, Import not in service"
 #define OB_CONVERT_ERROR__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4507, Convert error"
 #define OB_BYPASS_TIMEOUT__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -4510, Bypass timeout"
@@ -3498,6 +3530,29 @@ constexpr int OB_ERR_INVALID_DATE_MSG_FMT_V2 = -4219;
 #define OB_ERR_CANNOT_GRANT_STRING_TO_A_ROLE__ORA_USER_ERROR_MSG "ORA-01931: cannot grant %.*s to a role"
 #define OB_ERR_CASCADE_CONSTRAINTS_MUST_BE_SPECIFIED_TO_PERFORM_THIS_REVOKE__ORA_USER_ERROR_MSG "ORA-01981: CASCADE CONSTRAINTS must be specified to perform this revoke"
 #define OB_ERR_YOU_MAY_NOT_REVOKE_PRIVILEGES_FROM_YOURSELF__ORA_USER_ERROR_MSG "ORA-01749: you may not GRANT/REVOKE privileges to/from yourself"
+#define OB_ERR_INVALID_JSON_TEXT__ORA_USER_ERROR_MSG "ORA-00600: Invalid JSON text."
+#define OB_ERR_INVALID_JSON_TEXT_IN_PARAM__ORA_USER_ERROR_MSG "ORA-00600: Invalid JSON text in argument."
+#define OB_ERR_INVALID_JSON_BINARY_DATA__ORA_USER_ERROR_MSG "ORA-00600: The JSON binary value contains invalid data."
+#define OB_ERR_INVALID_JSON_PATH__ORA_USER_ERROR_MSG "ORA-00600: Invalid JSON path expression."
+#define OB_ERR_INVALID_JSON_CHARSET__ORA_USER_ERROR_MSG "ORA-00600: Cannot create a JSON value from a string."
+#define OB_ERR_INVALID_JSON_CHARSET_IN_FUNCTION__ORA_USER_ERROR_MSG "ORA-00600: Invalid JSON character data provided to function."
+#define OB_ERR_INVALID_TYPE_FOR_JSON__ORA_USER_ERROR_MSG "ORA-00600: Invalid data type for JSON data in argument %u to function %s; a JSON string or JSON type is required."
+#define OB_ERR_INVALID_CAST_TO_JSON__ORA_USER_ERROR_MSG "ORA-00600: Cannot CAST value to JSON."
+#define OB_ERR_INVALID_JSON_PATH_CHARSET__ORA_USER_ERROR_MSG "ORA-00600: A path expression must be encoded in the utf8 character set."
+#define OB_ERR_INVALID_JSON_PATH_WILDCARD__ORA_USER_ERROR_MSG "ORA-00600: In this situation, path expressions may not contain the * and ** tokens."
+#define OB_ERR_JSON_VALUE_TOO_BIG__ORA_USER_ERROR_MSG "ORA-00600: The JSON value is too big to be stored in a JSON column."
+#define OB_ERR_JSON_KEY_TOO_BIG__ORA_USER_ERROR_MSG "ORA-00600: The JSON object contains a key name that is too long."
+#define OB_ERR_JSON_USED_AS_KEY__ORA_USER_ERROR_MSG "ORA-00600: JSON column '%.*s' cannot be used in key specification."
+#define OB_ERR_JSON_VACUOUS_PATH__ORA_USER_ERROR_MSG "ORA-00600: The path expression is not allowed in this context."
+#define OB_ERR_JSON_BAD_ONE_OR_ALL_ARG__ORA_USER_ERROR_MSG "ORA-00600: The oneOrAll argument may take these values: \'one\' or \'all\'."
+#define OB_ERR_NUMERIC_JSON_VALUE_OUT_OF_RANGE__ORA_USER_ERROR_MSG "ORA-00600: Out of range JSON value for CAST"
+#define OB_ERR_INVALID_JSON_VALUE_FOR_CAST__ORA_USER_ERROR_MSG "ORA-00600: Invalid JSON value for CAST"
+#define OB_ERR_JSON_OUT_OF_DEPTH__ORA_USER_ERROR_MSG "ORA-00600: The JSON document exceeds the maximum depth."
+#define OB_ERR_JSON_DOCUMENT_NULL_KEY__ORA_USER_ERROR_MSG "ORA-00600: JSON documents may not contain NULL member names."
+#define OB_ERR_BLOB_CANT_HAVE_DEFAULT__ORA_USER_ERROR_MSG "ORA-00600: Invalid default value for \'%.*s\'"
+#define OB_ERR_INVALID_JSON_PATH_ARRAY_CELL__ORA_USER_ERROR_MSG "ORA-00600: A path expression is not a path to a cell in an array"
+#define OB_ERR_MISSING_JSON_VALUE__ORA_USER_ERROR_MSG "ORA-00600: No value was found by '%.192s' on the specified path."
+#define OB_ERR_MULTIPLE_JSON_VALUES__ORA_USER_ERROR_MSG "ORA-00600: More than one value was found by '%.192s' on the specified path."
 #define OB_ERR_SP_ALREADY_EXISTS__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -5541, %s %.*s already exists"
 #define OB_ERR_SP_DOES_NOT_EXIST__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -5542, %s %.*s.%.*s does not exist"
 #define OB_ERR_SP_UNDECLARED_VAR__ORA_USER_ERROR_MSG "PLS-00201: identifier '%.*s' must be declared"
@@ -3879,6 +3934,9 @@ constexpr int OB_ERR_INVALID_DATE_MSG_FMT_V2 = -4219;
 #define OB_ERR_INCORRECT_VALUE_FOR_FUNCTION__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -5936, Incorrect %.*s value: '%.*s' for function %.*s"
 #define OB_ERR_USER_EXCEED_RESOURCE__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -5967, User '%.*s' has exceeded the '%s' resource (current value: %lu)"
 #define OB_ERR_CTE_NEED_QUERY_BLOCKS__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -5976, Recursive Common Table Expression should have one or more non-recursive query blocks followed by one or more recursive ones: %s"
+#define OB_ERR_WINDOW_ROWS_INTERVAL_USE__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -5983, Window '%s': INTERVAL can only be used with RANGE frames."
+#define OB_ERR_WINDOW_RANGE_FRAME_ORDER_TYPE__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -5984, Window '%s' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression of numeric or temporal type"
+#define OB_ERR_WINDOW_ILLEGAL_ORDER_BY__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -5985, Window '%s': ORDER BY or PARTITION BY uses legacy position indication which is not supported, use expression."
 #define OB_TRANSACTION_SET_VIOLATION__ORA_USER_ERROR_MSG "ORA-00600: internal error code, arguments: -6001, Transaction set changed during the execution"
 #define OB_TRANS_ROLLBACKED__ORA_USER_ERROR_MSG "ORA-24761: transaction rolled back"
 #define OB_ERR_EXCLUSIVE_LOCK_CONFLICT__ORA_USER_ERROR_MSG "ORA-30006: resource busy; acquire with WAIT timeout expired"

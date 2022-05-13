@@ -62,6 +62,8 @@ public:
   static int check_multi_path_is_complete(const int64_t restore_timestamp,
       common::ObArray<share::ObBackupSetFileInfo> &set_info_list,
       common::ObArray<share::ObBackupPieceInfo> &piece_info_list, bool &is_complete);
+  static int check_can_restore_by_set_or_piece(const common::ObArray<share::ObSimpleBackupSetPath> &backup_set_list,
+      const common::ObArray<share::ObSimpleBackupPiecePath> &backup_piece_list);
 
 private:
   static int check_is_compat_backup_path(const char *cluster_name, const int64_t cluster_id,
@@ -87,18 +89,19 @@ private:
   static int get_backup_set_list(const bool is_preview, const char *cluster_name, const int64_t cluster_id,
       const uint64_t tenant_id, const int64_t restore_timestamp, const common::ObString &backup_dest_str,
       common::ObArray<ObSimpleBackupSetPath> &path_list, int64_t &snapshot_version, int64_t &start_replay_log_ts,
-      bool &is_compat_path);
+      bool &is_compat_path, bool &is_snapshot_restore);
   static int do_get_backup_set_list(const bool is_preview, const char *cluster_name, const int64_t cluster_id,
       const uint64_t tenant_id, const int64_t restore_timestamp, const ObBackupDest &backup_dest,
       common::ObArray<ObSimpleBackupSetPath> &path_list, int64_t &snapshot_version, int64_t &start_replay_log_ts,
-      bool &is_compat_path);
+      bool &is_compat_path, bool &is_snapshot_restore);
   static int do_get_backup_set_list_from_cluster_level(const bool is_preview, const char *cluster_name,
       const int64_t cluster_id, const uint64_t tenant_id, const int64_t restore_timestamp,
       const ObBackupDest &backup_dest, common::ObArray<ObSimpleBackupSetPath> &path_list, int64_t &snapshot_version,
-      int64_t &start_replay_log_ts);
+      int64_t &start_replay_log_ts, bool &is_snapshot_restore);
   static int do_inner_get_backup_set_list(const char *cluster_name, const int64_t cluster_id,
       const int64_t restore_timestamp, const ObBackupDest &backup_dest, const ObArray<ObBackupSetFileInfo> &file_infos,
-      common::ObArray<ObSimpleBackupSetPath> &path_list, int64_t &snapshot_version, int64_t &start_replay_log_ts);
+      common::ObArray<ObSimpleBackupSetPath> &path_list, int64_t &snapshot_version, int64_t &start_replay_log_ts,
+      bool &is_snapshot_restore);
   static int get_backup_piece_list(const bool is_preview, const char *cluster_name, const int64_t cluster_id,
       const uint64_t tenant_id, const int64_t snapshot_version, const int64_t start_replay_log_ts,
       const int64_t restore_timestamp, const common::ObString &backup_dest_str,

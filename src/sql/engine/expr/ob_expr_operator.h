@@ -404,6 +404,8 @@ public:
   // parameter evaluation.
   // NOTICE: %param must in %params array which passed by eval().
   int param_eval(common::ObExprCtx& expr_ctx, const common::ObObj& param, const int64_t param_index) const;
+  int get_param_type(common::ObExprCtx &expr_ctx, const common::ObObj &param, ObItemType &param_type) const;
+  int get_param_is_boolean(common::ObExprCtx &expr_ctx, const common::ObObj &param, bool &is_boolean) const;
 
   static bool is_valid_nls_param(const common::ObString& nls_param_str);
   inline bool is_param_lazy_eval() const
@@ -1552,7 +1554,8 @@ protected:
   // least should set cmp_op to CO_LT.
   // greatest should set cmp_op to CO_GT.
   static int calc_(common::ObObj& result, const common::ObObj* objs_stack, int64_t param_num,
-      const ObExprResType& result_type, common::ObExprCtx& expr_ctx, common::ObCmpOp cmp_op, bool need_cast);
+      const ObExprResType& result_type, common::ObExprCtx& expr_ctx, common::ObCmpOp cmp_op, bool need_cast,
+      ObExprOperatorType expr_type);
   OB_INLINE static int calc_without_cast(common::ObObj& result, const common::ObObj* objs_stack, int64_t param_num,
       const ObExprResType& result_type, common::ObExprCtx& expr_ctx, common::ObCmpOp cmp_op);
   OB_INLINE static int calc_with_cast(common::ObObj& result, const common::ObObj* objs_stack, int64_t param_num,

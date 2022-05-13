@@ -3394,7 +3394,7 @@ int ObBackupCopyPhysicalTask::fetch_backup_macro_block_arg(const share::ObPhysic
       macro_arg.fetch_arg_.macro_block_index_ = macro_idx;
       macro_arg.fetch_arg_.data_version_ = full_meta.meta_->data_version_;
       macro_arg.fetch_arg_.data_seq_ = full_meta.meta_->data_seq_;
-      if (!table_key.is_major_sstable()) {
+      if (!table_key.is_major_sstable() || table_key.is_trans_sstable()) {
         macro_arg.need_copy_ = true;
       } else {
         switch (backup_arg.backup_type_) {
@@ -3493,12 +3493,16 @@ int ObBackupCopyPhysicalTask::backup_physical_block(
     int write_idx = 0;
     ObArray<ObBackupTableMacroIndex> macro_indexs;
     ObBackupTableMacroIndex tmp_index;
+    bool is_cancel = false;
 
     while (OB_SUCC(ret)) {
       if (ObPartGroupMigrator::get_instance().is_stop()) {
         ret = OB_SERVER_IS_STOPPING;
         STORAGE_LOG(WARN, "server is stop, interrupts copy data.", K(ret));
         break;
+      } else if (REACH_TIME_INTERVAL(1 * 1000 * 1000) //1s
+          && OB_FAIL(SYS_TASK_STATUS_MGR.is_task_cancel(ctx_->group_task_->get_task_id(), is_cancel))) {
+        STORAGE_LOG(ERROR, "failed to check is group task cancel", K(ret), K(*this));
       } else if (ctx_->partition_guard_.get_partition_group()->is_removed()) {
         ret = OB_PG_IS_REMOVED;
         STORAGE_LOG(WARN, "partition has been removed, can not backup", K(ret), K(ctx_->replica_op_arg_.key_));
@@ -3743,7 +3747,7 @@ int ObBackupCopyPhysicalTask::reuse_block_index(
         } else if (OB_UNLIKELY(cur_index.data_length_ > 0)) {
           ret = OB_INIT_TWICE;
           STORAGE_LOG(WARN, "macro index is already init before reuse.", K(ret), K(i), K(cur_index));
-        } else if (!cur_index.table_key_ptr_->is_major_sstable()) {
+        } else if (!cur_index.table_key_ptr_->is_major_sstable() || cur_index.table_key_ptr_->is_trans_sstable()) {
           ret = OB_ERR_UNEXPECTED;
           STORAGE_LOG(WARN, "sstable is not major sstable, can not reuse block index", K(ret), K(cur_index));
         } else if (OB_FAIL(backup_pg_ctx_->fetch_prev_macro_index(*macro_index, macro_arg, prev_index))) {

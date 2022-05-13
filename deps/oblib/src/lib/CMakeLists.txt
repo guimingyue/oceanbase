@@ -11,6 +11,8 @@ ob_lib_add_target(oblib_lib_charset
   charset/ob_ctype_utf8.c
   charset/ob_dtoa.c
   hash/xxhash.c
+  signal/safe_snprintf.c
+  signal/ob_libunwind.c
 )
 disable_pch(oblib_lib_charset)
 
@@ -24,8 +26,18 @@ ob_lib_add_target(oblib_lib_coro_context
   coro/context/asm/make_sw_64_sysv_elf_gas.S
   coro/context/asm/jump_sw_64_sysv_elf_gas.S
   coro/context/asm/ontop_sw_64_aapcs_elf_gas.S
+
 )
 disable_pch(oblib_lib_coro_context)
+
+if(${ARCHITECTURE} STREQUAL "loongarch64")
+  ob_lib_add_target(oblib_lib_coro_context_loongarch64
+    coro/context/asm/jump_loongarch64_sysv_elf_gas.S
+    coro/context/asm/make_loongarch64_sysv_elf_gas.S
+    coro/context/asm/ontop_loongarch64_sysv_elf_gas.S
+  )
+  disable_pch(oblib_lib_coro_context_loongarch64)
+endif()
 
 ob_set_subtarget(oblib_lib coro
   coro/co_base_sched.cpp
@@ -84,7 +96,6 @@ ob_set_subtarget(oblib_lib common
   ec/ob_erasure_code_table_cache.cpp
   encrypt/ob_encrypted_helper.cpp
   file/file_directory_utils.cpp
-  file/fileutil.cpp
   file/ob_file.cpp
   hash_func/murmur_hash.cpp
   hash/ob_concurrent_hash_map.cpp
@@ -98,13 +109,18 @@ ob_set_subtarget(oblib_lib common
   json/ob_json.cpp
   json/ob_json_print_utils.cpp
   json/ob_yson.cpp
-  lock/Cond.cpp
-  lock/Mutex.cpp
+  json_type/ob_json_common.cpp
+  json_type/ob_json_path.cpp
+  json_type/ob_json_tree.cpp
+  json_type/ob_json_bin.cpp
+  json_type/ob_json_base.cpp
+  json_type/ob_json_parse.cpp
+  lock/cond.cpp
+  lock/mutex.cpp
   lock/ob_bucket_lock.cpp
   lock/ob_latch.cpp
   lock/ob_thread_cond.cpp
-  lock/RecMutex.cpp
-  lock/tbrwlock.cpp
+  lock/ob_rwlock.cpp
   metrics/ob_meter.cpp
   mysqlclient/ob_isql_client.cpp
   mysqlclient/ob_mysql_connection.cpp
@@ -122,7 +138,7 @@ ob_set_subtarget(oblib_lib common
   mysqlclient/ob_single_connection_proxy.cpp
   mysqlclient/ob_single_mysql_connection_pool.cpp
   net/ob_addr.cpp
-  net/tbnetutil.cpp
+  net/ob_net_util.cpp
   number/ob_number_v2.cpp
   ob_date_unit_type.cpp
   ob_abort.cpp
@@ -203,7 +219,6 @@ ob_set_subtarget(oblib_lib common
   word_segment/ob_word_segment.cpp
   encode/ob_base64_encode.cpp
   signal/ob_memory_cutter.cpp
-  signal/safe_snprintf.cpp
   signal/ob_signal_struct.cpp
   signal/ob_signal_utils.cpp
   signal/ob_signal_handlers.cpp
@@ -243,8 +258,8 @@ ob_lib_add_pchs(lib
   coro/co_var.h
   time/Time.h
   time/tbtimeutil.h
-  net/tbnetutil.h
-  lock/tbrwlock.h
+  net/ob_net_util.h
+  lock/ob_rwlock.h
   thread/runnable.h
   ob_define.h
   ob_cxa_guard.h
@@ -320,6 +335,12 @@ ob_lib_add_pchs(lib
   profile/ob_trace_id_adaptor.h
   json/ob_yson.h
   json/ob_yson_encode.h
+  json_type/ob_json_common.h
+  json_type/ob_json_path.h
+  json_type/ob_json_tree.h
+  json_type/ob_json_bin.h
+  json_type/ob_json_base.h
+  json_type/ob_json_parse.h 
   container/ob_array_wrap.h
   trace/ob_trace_event.h
   timezone/ob_time_convert.h
@@ -370,10 +391,10 @@ ob_lib_add_pchs(lib
   timezone/ob_timezone_info.h
   rowid/ob_urowid.h
   charset/ob_dtoa.h
-  lock/Lock.h
-  lock/Mutex.h
-  lock/Cond.h
-  lock/Monitor.h
+  lock/ob_lock.h
+  lock/mutex.h
+  lock/cond.h
+  lock/ob_monitor.h
   task/ob_timer.h
   list/ob_list.h
   container/ob_bit_set.h

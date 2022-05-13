@@ -883,7 +883,7 @@ int ObTransService::acquire_sche_ctx_(ObTransDesc& trans_desc, ObScheTransCtx*& 
   } else if (!trans_desc.is_nested_stmt()) {
     TRANS_LOG(WARN, "Non-nested statements should not create a temporary scheduler", K(trans_desc));
   } else {
-    // 构建临时scheduler
+    // build temporary scheduler
     const ObTransID& trans_id = trans_desc.get_trans_id();
     const bool for_replay = false;
     bool alloc = true;
@@ -3394,9 +3394,9 @@ OB_INLINE int ObTransService::handle_start_participant_(const ObTransDesc& trans
                   trans_desc.is_can_elr()))) {
             TRANS_LOG(WARN, "init transaction context error", KR(ret), K(partition), K(trans_desc));
           } else {
-            part_ctx->set_session_id(trans_desc.get_session_id());
-            part_ctx->set_proxy_session_id(trans_desc.get_proxy_session_id());
-            part_ctx->set_scheduler(trans_id.get_addr());
+            (void)part_ctx->set_session_id(trans_desc.get_session_id());
+            (void)part_ctx->set_proxy_session_id(trans_desc.get_proxy_session_id());
+            (void)part_ctx->set_scheduler(trans_id.get_addr());
             (void)part_ctx->set_trans_app_trace_id_str(trans_desc.get_trans_app_trace_id_str());
             if (OB_FAIL(part_ctx->start_trans())) {
               TRANS_LOG(WARN, "start participant transaction error", KR(ret), K(partition), K(trans_desc));
@@ -6210,12 +6210,12 @@ int ObTransService::init_memtable_ctx_(ObMemtableCtx* mem_ctx, const uint64_t te
 }
 
 int ObTransService::alloc_memtable_ctx_(
-    const ObPartitionKey& pkey, const bool is_fast_select, const uint64_t tenant_id, ObMemtableCtx*& ctx)
+    const ObPartitionKey& pkey, const bool tls_enable, const uint64_t tenant_id, ObMemtableCtx*& ctx)
 {
   int ret = OB_SUCCESS;
 
   ObMemtableCtx* memtable_ctx = NULL;
-  if (is_fast_select) {
+  if (!tls_enable) {
     memtable_ctx = static_cast<ObMemtableCtx*>(mt_ctx_factory_.alloc(tenant_id));
     if (NULL != memtable_ctx) {
       memtable_ctx->set_self_alloc_ctx(true);
@@ -6249,7 +6249,7 @@ int ObTransService::alloc_memtable_ctx_(
     }
   } else {
     ret = OB_ALLOCATE_MEMORY_FAILED;
-    TRANS_LOG(WARN, "allocate memory failed", K(ret), K(pkey), K(is_fast_select));
+    TRANS_LOG(WARN, "allocate memory failed", K(ret), K(pkey), K(tls_enable));
   }
   return ret;
 }
@@ -6328,6 +6328,7 @@ int ObTransService::get_store_ctx(const ObTransDesc& trans_desc, const ObPartiti
       if (trans_desc.is_fast_select() || trans_desc.is_not_create_ctx_participant(pg_key, user_specified_snapshot)) {
         int64_t part_snapshot_version = ObTransVersion::INVALID_TRANS_VERSION;
         store_ctx.trans_id_ = trans_desc.get_trans_id();
+        bool tls_enable = store_ctx.is_thread_scope_ && !trans_desc.is_fast_select();
         if (OB_FAIL(handle_snapshot_for_read_only_participant_(
                 trans_desc, pg_key, user_specified_snapshot, part_snapshot_version))) {
           TRANS_LOG(WARN,
@@ -6336,7 +6337,7 @@ int ObTransService::get_store_ctx(const ObTransDesc& trans_desc, const ObPartiti
               K(trans_desc),
               K(pg_key),
               K(user_specified_snapshot));
-        } else if (OB_FAIL(alloc_memtable_ctx_(pg_key, trans_desc.is_fast_select(), pg_key.get_tenant_id(), mt_ctx))) {
+        } else if (OB_FAIL(alloc_memtable_ctx_(pg_key, tls_enable, pg_key.get_tenant_id(), mt_ctx))) {
           TRANS_LOG(WARN, "allocate memory failed", K(ret), K(pg_key));
         } else if (!mt_ctx->is_self_alloc_ctx() && OB_FAIL(init_memtable_ctx_(mt_ctx, pg_key.get_tenant_id()))) {
           TRANS_LOG(WARN, "init mem ctx failed", K(ret), K(pg_key));
@@ -7739,7 +7740,7 @@ int ObTransService::get_min_uncommit_prepare_version(const ObPartitionKey& parti
  * get minimum prepare version of transaction whose commit version greate than lg_ts
  * */
 int ObTransService::get_min_prepare_version(
-    const ObPartitionKey& partition, const int64_t log_ts, int64_t& min_prepare_version)
+    const ObPartitionKey &partition, const int64_t freeze_ts, int64_t &min_prepare_version)
 {
   int ret = OB_SUCCESS;
 
@@ -7752,13 +7753,13 @@ int ObTransService::get_min_prepare_version(
   } else if (!partition.is_valid()) {
     TRANS_LOG(WARN, "invalid argument", K(partition));
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(part_trans_ctx_mgr_.get_min_prepare_version(partition, log_ts, min_prepare_version))) {
-    TRANS_LOG(WARN, "ObPartTransCtxMgr get min prepare version error", KR(ret), K(partition), K(log_ts));
+  } else if (OB_FAIL(part_trans_ctx_mgr_.get_min_prepare_version(partition, freeze_ts, min_prepare_version))) {
+    TRANS_LOG(WARN, "ObPartTransCtxMgr get min prepare version error", KR(ret), K(partition), K(freeze_ts));
   } else if (min_prepare_version <= 0) {
     TRANS_LOG(ERROR, "invalid min prepare version, unexpected error", K(partition), K(min_prepare_version));
     ret = OB_ERR_UNEXPECTED;
   } else {
-    TRANS_LOG(DEBUG, "get min prepare version success", K(partition), K(log_ts), K(min_prepare_version));
+    TRANS_LOG(DEBUG, "get min prepare version success", K(partition), K(freeze_ts), K(min_prepare_version));
   }
 
   return ret;
@@ -9041,7 +9042,8 @@ int ObTransService::get_max_trans_version_before_given_log_ts(
   return ret;
 }
 
-int ObTransService::clear_unused_trans_status(const ObPartitionKey& pg_key, const int64_t max_cleanout_log_ts)
+int ObTransService::clear_unused_trans_status(
+    const ObPartitionKey &pg_key, const ObIArray<int64_t> &max_cleanout_log_ts)
 {
   int ret = OB_SUCCESS;
 
@@ -9258,6 +9260,7 @@ int ObTransService::get_store_ctx_(const ObStandaloneStmtDesc& desc, const ObPar
   bool updated = false;
   bool is_dup_table = false;
   int64_t leader_epoch = 0;
+  bool tls_enable = store_ctx.is_thread_scope_;
 
   if (OB_UNLIKELY(!desc.is_valid() || !pg_key.is_valid())) {
     ret = OB_INVALID_ARGUMENT;
@@ -9279,7 +9282,7 @@ int ObTransService::get_store_ctx_(const ObStandaloneStmtDesc& desc, const ObPar
              OB_FAIL(ts_mgr_->update_local_trans_version(pg_key.get_tenant_id(), snapshot_version, updated))) {
     TRANS_LOG(WARN, "update gts failed", KR(ret), K(pg_key));
   } else {
-    if (OB_FAIL(alloc_memtable_ctx_(pg_key, false, pg_key.get_tenant_id(), mt_ctx))) {
+    if (OB_FAIL(alloc_memtable_ctx_(pg_key, tls_enable, pg_key.get_tenant_id(), mt_ctx))) {
       TRANS_LOG(WARN, "allocate memory failed", K(ret), K(pg_key));
     } else if (!mt_ctx->is_self_alloc_ctx() && OB_FAIL(init_memtable_ctx_(mt_ctx, pg_key.get_tenant_id()))) {
       TRANS_LOG(WARN, "init mem ctx failed", K(ret), K(pg_key));
@@ -9320,7 +9323,7 @@ int ObTransService::revert_store_ctx_(const ObStandaloneStmtDesc& desc, const Ob
 {
   int ret = OB_SUCCESS;
 
-  if (OB_UNLIKELY(!desc.is_valid() || !pg_key.is_valid() || OB_ISNULL(part_mgr))) {
+  if (OB_UNLIKELY(!desc.is_valid() || !pg_key.is_valid())) {
     TRANS_LOG(WARN, "invalid argument", K(desc), K(pg_key));
     ret = OB_INVALID_ARGUMENT;
   } else {

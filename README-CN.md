@@ -41,6 +41,7 @@ OceanBase 数据库使用 [MulanPubL - 2.0](http://license.coscl.org.cn/MulanPub
 | 操作系统 | 版本 | 架构 | 编译 | 包部署 | 编译部署 | mysqltest |
 | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
 | Alibaba Cloud Linux | 2.1903 | x86_64 | ✅ | ✅ | ✅ | ✅ |
+| Arch | Rolling | x86_64 | ✅ | ❌ | ❌ | ❌ |
 | CentOS | 7.2, 8.3 | x86_64 | ✅ | ✅ | ✅ | ✅ |
 | Debian | 9.8, 10.9 | x86_64 | ✅ | ✅ | ✅ | ✅ |
 | Fedora | 33 | x86_64 | ✅ | ✅ | ✅ | ✅ |
@@ -71,7 +72,14 @@ OceanBase 数据库使用 [MulanPubL - 2.0](http://license.coscl.org.cn/MulanPub
 
 - [GitHub Issue](https://github.com/oceanbase/oceanbase/issues)
 - [官方网站](https://open.oceanbase.com/)
-- 知识问答（Coming soon）
+
+## Community
+
+ - [论坛](https://open.oceanbase.com/answer)
+ - [钉钉 33254054](https://h5.dingtalk.com/circle/healthCheckin.html?corpId=ding0e936c01b36c156d60c3ef38bbf6dadc&594d9=30470&cbdbhh=qwertyuiop&origin=1)
+ - [微信 oceanbasecommunity](https://gw.alipayobjects.com/zos/oceanbase/0a69627f-8005-4c46-be1f-aac7a2b85c13/image/2022-03-01/85d42796-4e22-463a-9658-57402d7b9bc3.png)
+ - [oceanbase.slack](https://oceanbase.slack.com/)
+ - Mailist [Comming soon]
 
 ## Roadmap
 

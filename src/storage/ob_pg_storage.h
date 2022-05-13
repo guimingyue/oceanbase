@@ -351,7 +351,7 @@ public:
       transaction::ObTransService& trans_service, const int64_t frozen_version);
   int restore_mem_trans_table(ObSSTable& trans_sstable);
   int restore_mem_trans_table();
-  int get_max_cleanout_log_ts(int64_t& max_cleanout_log_ts);
+  int get_max_cleanout_log_ts(ObIArray<int64_t> &max_cleanout_log_ts);
   int clear_unused_trans_status();
   int physical_flashback(const int64_t flashback_scn);
   int set_meta_block_list(const common::ObIArray<blocksstable::MacroBlockId>& meta_block_list);
@@ -539,6 +539,9 @@ private:
           map_.revert(part);
         } else if (OB_FAIL(map_.del(pkey))) {
           STORAGE_LOG(WARN, "del pg partition from map fail", K(pkey));
+        }
+        if (OB_SUCC(ret)) {
+          STORAGE_LOG(INFO, "remove pg partition success", K(pkey), K(part));
         }
       }
       return ret;

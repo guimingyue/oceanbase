@@ -4,7 +4,7 @@ include(cmake/Utils.cmake)
 include(cmake/Env.cmake)
 
 project("OceanBase CE"
-  VERSION 3.1.2
+  VERSION 3.1.3
   DESCRIPTION "OceanBase distributed database system"
   HOMEPAGE_URL "https://open.oceanbase.com/"
   LANGUAGES CXX C ASM)
@@ -81,7 +81,7 @@ elseif(OB_INCLUDE_UNITTEST)
   add_subdirectory(unittest EXCLUDE_FROM_ALL)
 endif()
 
-if (OB_BUILD_TOOLS)
+if (OB_BUILD_TOOLS OR OB_BUILD_LIBOBLOG)
   add_subdirectory(tools)
 elseif (OB_INCLUDE_TOOLS)
   add_subdirectory(tools EXCLUDE_FROM_ALL)

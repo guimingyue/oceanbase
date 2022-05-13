@@ -357,8 +357,13 @@ int ObTransformJoinElimination::create_missing_select_items(ObSelectStmt* source
       for (int64_t i = 0; OB_SUCC(ret) && i < table_map.count(); i++) {
         TableItem* temp_source_table = NULL;
         TableItem* temp_target_table = NULL;
-        if (OB_ISNULL(temp_source_table = source_stmt->get_table_item(i)) ||
-            OB_ISNULL(temp_target_table = target_stmt->get_table_item(table_map.at(i)))) {
+        int64_t idx = table_map.at(i);
+        if (idx < 0 || idx >= target_stmt->get_table_size() || 
+            i >= source_stmt->get_table_size()) {
+          ret = OB_ERR_UNEXPECTED;
+          LOG_WARN("unexpect table idx", K(ret));
+        } else if (OB_ISNULL(temp_source_table = source_stmt->get_table_item(i)) ||
+            OB_ISNULL(temp_target_table = target_stmt->get_table_item(idx))) {
           ret = OB_ERR_UNEXPECTED;
           LOG_WARN("get unexpected null", K(temp_source_table), K(temp_target_table), K(ret));
         } else if ((temp_source_table->is_basic_table() && temp_target_table->is_basic_table()) ||
@@ -2069,22 +2074,20 @@ int ObTransformJoinElimination::trans_column_expr(ObDMLStmt* stmt, ObRawExpr* ex
 {
   int ret = OB_SUCCESS;
   new_expr = NULL;
+  bool is_nullable = false;
   if (OB_ISNULL(stmt) || OB_ISNULL(expr) || OB_ISNULL(ctx_)) {
-    LOG_WARN("param has null", K(ret));
+    LOG_WARN("param has null", K(ret), K(stmt), K(expr), K(ctx_));
+  } else if (OB_FAIL(ObTransformUtils::check_expr_nullable(stmt, expr, is_nullable, ObTransformUtils::NULLABLE_SCOPE::NS_FROM))) {
+    LOG_WARN("failed to check whether expr is nullable", K(ret));
+  } else if (!is_nullable) {
+    if (OB_FAIL(ObRawExprUtils::build_const_bool_expr(ctx_->expr_factory_, new_expr, true))) {
+      LOG_WARN("build true expr failed", K(ret));
+    } else { /*do nothing*/
+    }
   } else {
-    bool is_nullable = false;
-    if (OB_FAIL(ObTransformUtils::check_expr_nullable(stmt, expr, is_nullable))) {
-      LOG_WARN("failed to check whether expr is nullable", K(ret));
-    } else if (!is_nullable) {
-      if (OB_FAIL(ObRawExprUtils::build_const_bool_expr(ctx_->expr_factory_, new_expr, true))) {
-        LOG_WARN("build true expr failed", K(ret));
-      } else { /*do nothing*/
-      }
-    } else {
-      if (OB_FAIL(ObRawExprUtils::build_is_not_null_expr(*ctx_->expr_factory_, expr, new_expr))) {
-        LOG_WARN("build is not null expr failed", K(ret));
-      } else { /*do nothing*/
-      }
+    if (OB_FAIL(ObRawExprUtils::build_is_not_null_expr(*ctx_->expr_factory_, expr, new_expr))) {
+      LOG_WARN("build is not null expr failed", K(ret));
+    } else { /*do nothing*/
     }
   }
   return ret;

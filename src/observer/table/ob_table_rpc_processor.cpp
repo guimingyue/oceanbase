@@ -246,14 +246,18 @@ ObTableApiProcessorBase::ObTableApiProcessorBase(const ObGlobalContext &gctx)
      consistency_level_(ObTableConsistencyLevel::STRONG)
 {
   need_audit_ = GCONF.enable_sql_audit;
+  participants_ptr_ = &participants_;
+  trans_state_ptr_ = &trans_state_;
+  trans_desc_ptr_ = &trans_desc_;
+  part_epoch_list_ptr_ = &part_epoch_list_;
 }
 
 void ObTableApiProcessorBase::reset_ctx()
 {
-  participants_.reset();
-  trans_state_.reset();
-  trans_desc_.reset();
-  part_epoch_list_.reset();
+  participants_ptr_->reset();
+  trans_state_ptr_->reset();
+  trans_desc_ptr_->reset();
+  part_epoch_list_ptr_->reset(); 
   did_async_end_trans_ = false;
 }
 
@@ -313,9 +317,15 @@ int ObTableApiProcessorBase::init_session()
   static const uint32_t sess_version = 0;
   static const uint32_t sess_id = 1;
   static const uint64_t proxy_sess_id = 1;
-  if (OB_FAIL(session().test_init(sess_version, sess_id, proxy_sess_id, &session_alloc()))) {
+
+  // ensure allocator is constructed before session to
+  // avoid coredump at observer exit
+  ObArenaAllocator *allocator = &session_alloc();
+  oceanbase::sql::ObSQLSessionInfo &sess = session();
+
+  if (OB_FAIL(sess.test_init(sess_version, sess_id, proxy_sess_id, allocator))) {
     LOG_WARN("init session failed", K(ret));
-  } else if (OB_FAIL(session().load_default_sys_variable(false, true))) {
+  } else if (OB_FAIL(sess.load_default_sys_variable(false, true))) {
     LOG_WARN("failed to load default sys var", K(ret));
   }
   return ret;
@@ -442,7 +452,7 @@ int ObTableApiProcessorBase::start_trans(bool is_readonly, const sql::stmt::Stmt
 {
   int ret = OB_SUCCESS;
   NG_TRACE(T_start_trans_begin);
-  if (OB_FAIL(get_participants(table_id, part_ids, participants_))) {
+  if (OB_FAIL(get_participants(table_id, part_ids, *participants_ptr_))) {
     LOG_WARN("failed to get participants", K(ret));
   }
   const uint64_t tenant_id = credential_.tenant_id_;
@@ -462,11 +472,10 @@ int ObTableApiProcessorBase::start_trans(bool is_readonly, const sql::stmt::Stmt
     start_trans_param.set_type(transaction::ObTransType::TRANS_USER);
     start_trans_param.set_isolation(transaction::ObTransIsolation::READ_COMMITED);
     start_trans_param.set_autocommit(true);
-    // 设置事务一致性类型
     start_trans_param.set_consistency_type(trans_consistency_type);
-    // 默认只要求语句级别快照
-    // 如果要控制其他的语义，参见ObTransConsistencyType和ObTransReadSnapshotType定义
-    // SQL层在ObSqlTransControl::decide_trans_read_interface_specs()来决定语义
+    // use statement snapshot in default
+    // see ObTransConsistencyType and ObTransReadSnapshotType for more details 
+    // you can also refer to ObSqlTransControl::decide_trans_read_interface_specs of SQL layer
     start_trans_param.set_read_snapshot_type(transaction::ObTransReadSnapshotType::STATEMENT_SNAPSHOT);
     start_trans_param.set_cluster_version(GET_MIN_CLUSTER_VERSION());
 
@@ -474,7 +483,7 @@ int ObTableApiProcessorBase::start_trans(bool is_readonly, const sql::stmt::Stmt
     const uint64_t proxy_session_id = 1;  // ignore
     const uint64_t org_cluster_id = ObServerConfig::get_instance().cluster_id;
 
-    if (true == trans_state_.is_start_trans_executed()) {
+    if (true == trans_state_ptr_->is_start_trans_executed()) {
       ret = OB_ERR_UNEXPECTED;
       LOG_ERROR("start_trans is executed", K(ret));
     } else {
@@ -483,16 +492,16 @@ int ObTableApiProcessorBase::start_trans(bool is_readonly, const sql::stmt::Stmt
                                              start_trans_param,
                                              trans_timeout_ts,
                                              session_id,
-                                             proxy_session_id, trans_desc_))) {
+                                             proxy_session_id, *trans_desc_ptr_))) {
         LOG_WARN("fail start trans", K(ret), K(start_trans_param));
       }
-      trans_state_.set_start_trans_executed(OB_SUCC(ret));
+      trans_state_ptr_->set_start_trans_executed(OB_SUCC(ret));
     }
   }
   NG_TRACE(T_start_trans_end);
   // 2. start stmt
   if (OB_SUCC(ret)) {
-    transaction::ObStmtDesc &stmt_desc = trans_desc_.get_cur_stmt_desc();
+    transaction::ObStmtDesc &stmt_desc = trans_desc_ptr_->get_cur_stmt_desc();
     const bool is_sfu = false;
     stmt_desc.stmt_tenant_id_ = tenant_id;
     stmt_desc.phy_plan_type_ = sql::OB_PHY_PLAN_LOCAL;
@@ -508,31 +517,31 @@ int ObTableApiProcessorBase::start_trans(bool is_readonly, const sql::stmt::Stmt
     const bool is_retry_sql = false;
     transaction::ObStmtParam stmt_param;
     ObPartitionArray unreachable_partitions;
-    if (true == trans_state_.is_start_stmt_executed()) {
+    if (true == trans_state_ptr_->is_start_stmt_executed()) {
       ret = OB_ERR_UNEXPECTED;
       LOG_ERROR("start_stmt is executed", K(ret));
     } else if (OB_FAIL(stmt_param.init(tenant_id, stmt_timeout_ts, is_retry_sql))) {
       LOG_WARN("ObStmtParam init error", K(ret), K(tenant_id), K(is_retry_sql));
     } else if (OB_FAIL(part_service_->start_stmt(stmt_param,
-                                                 trans_desc_,
-                                                 participants_, unreachable_partitions))) {
+                                                 *trans_desc_ptr_,
+                                                 *participants_ptr_, unreachable_partitions))) {
       LOG_WARN("failed to start stmt", K(ret), K(stmt_param));
     }
-    trans_state_.set_start_stmt_executed(OB_SUCC(ret));
+    trans_state_ptr_->set_start_stmt_executed(OB_SUCC(ret));
   }
 
   // 3. start participant
   NG_TRACE(T_start_part_begin);
   if (OB_SUCC(ret)) {
-    if (true == trans_state_.is_start_participant_executed()) {
+    if (true == trans_state_ptr_->is_start_participant_executed()) {
       ret = OB_ERR_UNEXPECTED;
       LOG_ERROR("start_participant is executed", K(ret));
-    } else if (OB_FAIL(part_service_->start_participant(trans_desc_,
-                                                        participants_.get_partitions(),
-                                                        part_epoch_list_))) {
+    } else if (OB_FAIL(part_service_->start_participant(*trans_desc_ptr_,
+                                                        participants_ptr_->get_partitions(),
+                                                        *part_epoch_list_ptr_))) {
       LOG_WARN("fail start participants", K(ret));
     }
-    trans_state_.set_start_participant_executed(OB_SUCC(ret));
+    trans_state_ptr_->set_start_participant_executed(OB_SUCC(ret));
   }
   NG_TRACE(T_start_part_end);
   return ret;
@@ -544,31 +553,31 @@ int ObTableApiProcessorBase::end_trans(bool is_rollback, rpc::ObRequest *req, in
   int ret = OB_SUCCESS;
   NG_TRACE(T_end_part_begin);
   int end_ret = OB_SUCCESS;
-  if (trans_state_.is_start_participant_executed() && trans_state_.is_start_participant_success()) {
+  if (trans_state_ptr_->is_start_participant_executed() && trans_state_ptr_->is_start_participant_success()) {
     if (OB_SUCCESS != (end_ret = part_service_->end_participant(
-                           is_rollback, trans_desc_, participants_.get_partitions()))) {
-      ret = (OB_SUCCESS == ret) ? end_ret : ret;
+                           is_rollback, *trans_desc_ptr_, participants_ptr_->get_partitions()))) {
+      ret = end_ret;
       LOG_WARN("fail to end participant", K(ret), K(end_ret),
                K(is_rollback));
     }
-    trans_state_.clear_start_participant_executed();
+    trans_state_ptr_->clear_start_participant_executed();
   }
   NG_TRACE(T_end_part_end);
-  if (trans_state_.is_start_stmt_executed() && trans_state_.is_start_stmt_success()) {
+  if (trans_state_ptr_->is_start_stmt_executed() && trans_state_ptr_->is_start_stmt_success()) {
     is_rollback = (is_rollback || OB_SUCCESS != ret);
     bool is_incomplete = false;
     ObPartitionArray discard_partitions;
     if (OB_SUCCESS != (end_ret = part_service_->end_stmt(
-                           is_rollback, is_incomplete, participants_.get_partitions(),
-                           part_epoch_list_, discard_partitions, participants_, trans_desc_))) {
+                           is_rollback, is_incomplete, participants_ptr_->get_partitions(),
+                           *part_epoch_list_ptr_, discard_partitions, *participants_ptr_, *trans_desc_ptr_))) {
       ret = (OB_SUCCESS == ret) ? end_ret : ret;
       LOG_WARN("fail to end stmt", K(ret), K(end_ret), K(is_rollback));
     }
-    trans_state_.clear_start_stmt_executed();
+    trans_state_ptr_->clear_start_stmt_executed();
   }
   NG_TRACE(T_end_trans_begin);
-  if (trans_state_.is_start_trans_executed() && trans_state_.is_start_trans_success()) {
-    if (trans_desc_.is_readonly() || use_sync) {
+  if (trans_state_ptr_->is_start_trans_executed() && trans_state_ptr_->is_start_trans_success()) {
+    if (trans_desc_ptr_->is_readonly() || use_sync) {
       ret = sync_end_trans(is_rollback, timeout_ts);
     } else {
       if (is_rollback) {
@@ -577,9 +586,9 @@ int ObTableApiProcessorBase::end_trans(bool is_rollback, rpc::ObRequest *req, in
         ret = async_commit_trans(req, timeout_ts);
       }
     }
-    trans_state_.clear_start_trans_executed();
+    trans_state_ptr_->clear_start_trans_executed();
   }
-  trans_state_.reset();
+  trans_state_ptr_->reset();
   NG_TRACE(T_end_trans_end);
   return ret;
 }
@@ -588,7 +597,7 @@ int ObTableApiProcessorBase::sync_end_trans(bool is_rollback, int64_t timeout_ts
 {
   int ret = OB_SUCCESS;
   sql::ObEndTransSyncCallback callback;
-  if (OB_FAIL(callback.init(&trans_desc_, NULL))) {
+  if (OB_FAIL(callback.init(trans_desc_ptr_, NULL))) {
     LOG_WARN("fail init callback", K(ret));
   } else {
     int wait_ret = OB_SUCCESS;
@@ -598,13 +607,13 @@ int ObTableApiProcessorBase::sync_end_trans(bool is_rollback, int64_t timeout_ts
     callback.handout();
     const int64_t stmt_timeout_ts = timeout_ts;
     // whether end_trans is success or not, the callback MUST be invoked
-    if (OB_FAIL(part_service_->end_trans(is_rollback, trans_desc_, callback, stmt_timeout_ts))) {
-      LOG_WARN("fail end trans when session terminate", K(ret), K_(trans_desc), K(stmt_timeout_ts));
+    if (OB_FAIL(part_service_->end_trans(is_rollback, *trans_desc_ptr_, callback, stmt_timeout_ts))) {
+      LOG_WARN("fail end trans when session terminate", K(ret), KP_(trans_desc_ptr), K(stmt_timeout_ts));
     }
     // MUST wait here
     if (OB_UNLIKELY(OB_SUCCESS != (wait_ret = callback.wait()))) {
       LOG_WARN("sync end trans callback return an error!", K(ret),
-               K(wait_ret), K_(trans_desc), K(stmt_timeout_ts));
+               K(wait_ret), KP_(trans_desc_ptr), K(stmt_timeout_ts));
     }
     ret = OB_SUCCESS != ret? ret : wait_ret;
     bool has_called_txs_end_trans = false;
@@ -640,8 +649,8 @@ int ObTableApiProcessorBase::async_commit_trans(rpc::ObRequest *req, int64_t tim
     callback.handout();
     const int64_t stmt_timeout_ts = timeout_ts;
     // whether end_trans is success or not, the callback MUST be invoked
-    if (OB_FAIL(part_service_->end_trans(is_rollback, trans_desc_, callback, stmt_timeout_ts))) {
-      LOG_WARN("fail end trans when session terminate", K(ret), K_(trans_desc), K(stmt_timeout_ts));
+    if (OB_FAIL(part_service_->end_trans(is_rollback, *trans_desc_ptr_, callback, stmt_timeout_ts))) {
+      LOG_WARN("fail end trans when session terminate", K(ret), KP_(trans_desc_ptr), K(stmt_timeout_ts));
     }
     // ignore the return code of end_trans
     THIS_WORKER.disable_retry(); // can NOT retry after set end trans async to be true
@@ -702,7 +711,7 @@ static int set_audit_name(const char *info_name, char *&audit_name, int64_t &aud
       ret = OB_ALLOCATE_MEMORY_FAILED;
       SERVER_LOG(WARN, "fail to alloc memory", K(ret), K(buf_size));
     } else {
-      strcpy(buf, info_name);
+      strncpy(buf, info_name, buf_size);
       audit_name = buf;
       audit_name_length = name_length;
     }
@@ -770,17 +779,18 @@ void ObTableApiProcessorBase::end_audit()
   // append request string to query_sql
   if (NULL != request_string_ && request_string_len_ > 0) {
     static const char request_print_prefix[] = ", \nrequest: ";
-    const int64_t buf_size = audit_record_.sql_len_ + sizeof(request_print_prefix) + request_string_len_;
+    const int64_t request_print_prefix_size = sizeof(request_print_prefix);
+    const int64_t buf_size = audit_record_.sql_len_ + request_print_prefix_size + request_string_len_;
     char *buf = reinterpret_cast<char *>(audit_allocator_.alloc(buf_size));
     if (NULL == buf) {
       SERVER_LOG(WARN, "fail to alloc audit memory", K(buf_size), K(audit_record_.sql_), K(request_string_));
     } else {
       memset(buf, 0, buf_size);
       if (OB_NOT_NULL(audit_record_.sql_)) {
-        strcat(buf, audit_record_.sql_);
+        strncat(buf, audit_record_.sql_, audit_record_.sql_len_);
       }
-      strcat(buf, request_print_prefix);
-      strcat(buf, request_string_);
+      strncat(buf, request_print_prefix, request_print_prefix_size);
+      strncat(buf, request_string_, request_string_len_);
       audit_record_.sql_ = buf;
       audit_record_.sql_len_ = buf_size;
     }
@@ -904,6 +914,7 @@ template class oceanbase::observer::ObTableRpcProcessor<ObTableRpcProxy::ObRpc<O
 template class oceanbase::observer::ObTableRpcProcessor<ObTableRpcProxy::ObRpc<OB_TABLE_API_BATCH_EXECUTE> >;
 template class oceanbase::observer::ObTableRpcProcessor<ObTableRpcProxy::ObRpc<OB_TABLE_API_EXECUTE_QUERY> >;
 template class oceanbase::observer::ObTableRpcProcessor<ObTableRpcProxy::ObRpc<OB_TABLE_API_QUERY_AND_MUTATE> >;
+template class oceanbase::observer::ObTableRpcProcessor<ObTableRpcProxy::ObRpc<OB_TABLE_API_EXECUTE_QUERY_SYNC> >;
 
 template<class T>
 int ObTableRpcProcessor<T>::deserialize()
@@ -1044,7 +1055,6 @@ ObHTableDeleteExecutor::ObHTableDeleteExecutor(common::ObArenaAllocator &alloc,
   mutations_result_.set_entity_factory(&entity_factory_);
 }
 
-// @see https://hbase.apache.org/apidocs/org/apache/hadoop/hbase/client/Delete.html
 int ObHTableDeleteExecutor::htable_delete(const ObTableBatchOperation &batch_operation, int64_t &affected_rows)
 {
   int ret = OB_SUCCESS;
@@ -1246,6 +1256,8 @@ int ObHTablePutExecutor::htable_put(const ObTableBatchOperation &mutations, int6
   if (0 == now_ms) {
     now_ms = -ObHTableUtils::current_time_millis();
   }
+  // store not set timestamp cell for tmp
+  ObArray<ObObj*> reset_timestamp_obj;
   //ObString htable_row;
   const int64_t N = mutations.count();
   for (int64_t i = 0; OB_SUCCESS == ret && i < N; ++i)
@@ -1272,6 +1284,7 @@ int ObHTablePutExecutor::htable_put(const ObTableBatchOperation &mutations, int6
         // update timestamp iff LATEST_TIMESTAMP
         if (ObHTableConstants::LATEST_TIMESTAMP == timestamp) {
           hbase_timestamp.set_int(now_ms);
+          reset_timestamp_obj.push_back(&hbase_timestamp);
         }
       }
     }
@@ -1283,6 +1296,14 @@ int ObHTablePutExecutor::htable_put(const ObTableBatchOperation &mutations, int6
     if (OB_FAIL(table_service_->multi_insert_or_update(mutate_ctx_, mutations, mutations_result_))) {
       if (OB_TRY_LOCK_ROW_CONFLICT != ret) {
         LOG_WARN("failed to multi_delete", K(ret));
+      }
+      if ( OB_TRANSACTION_SET_VIOLATION == ret ) { 
+        // When OB_TRANSACTION_SET_VIOLATION happen, there will not refresh timestamp
+        // and will cover old row data in processor local retry. so here reset timestamp 
+        // to origin LATEST_TIMESTAMP in order to retry in queue and refresh timestamp force.
+        for (int64_t i = 0; i < reset_timestamp_obj.count(); i++) {
+          reset_timestamp_obj.at(i)->set_int(ObHTableConstants::LATEST_TIMESTAMP);
+        }
       }
     } else {
       affected_rows = 1;
@@ -1580,12 +1601,15 @@ int ObHTableIncrementExecutor::add_to_results(table::ObTableQueryResult &results
     objs[1] = cq;
     objs[2] = ts;
     int64_t timestamp = 0;
-    objs[2].get_int(timestamp);
-    objs[2].set_int(-timestamp);  // negate_htable_timestamp
-    objs[3] = value;
-    common::ObNewRow row(objs, 4);
-    if (OB_FAIL(results.add_row(row))) {  // deep copy
-      LOG_WARN("failed to add row to results", K(ret), K(row));
+    if (OB_FAIL(objs[2].get_int(timestamp))) {
+      LOG_WARN("failed to get int from object", K(ret));
+    } else {
+      objs[2].set_int(-timestamp);  // negate_htable_timestamp
+      objs[3] = value;
+      common::ObNewRow row(objs, 4);
+      if (OB_FAIL(results.add_row(row))) {  // deep copy
+        LOG_WARN("failed to add row to results", K(ret), K(row));
+      }
     }
   }
   return ret;

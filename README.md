@@ -27,7 +27,7 @@ OceanBase Database supports the entire core business of Alipay and the core syst
 
 ## Quick start
 
-Refer to the [Get Started guide](docs/docs/docs-en/quick-start-en.md) to try out OceanBase Database.
+Refer to the [Get Started guide](https://open.oceanbase.com/quickStart) to try out OceanBase Database.
 
 ## Documentation
 
@@ -48,6 +48,7 @@ OceanBase Database is under [MulanPubL - 2.0](http://license.coscl.org.cn/MulanP
 | OS | Ver. | Arch | Compilable | Package Deployable | Compiled Binary Deployable | Mysqltest Passed |
 | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
 | Alibaba Cloud Linux | 2.1903 | x86_64 | ✅ | ✅ | ✅ | ✅ |
+| Arch | Rolling | x86_64 | ✅ | ❌ | ❌ | ❌ |
 | CentOS | 7.2, 8.3 | x86_64 | ✅ | ✅ | ✅ | ✅ |
 | Debian | 9.8, 10.9 | x86_64 | ✅ | ✅ | ✅ | ✅ |
 | Fedora | 33 | x86_64 | ✅ | ✅ | ✅ | ✅ |
@@ -77,7 +78,15 @@ In case you have any problems when using OceanBase Database, welcome reach out f
 
 - [GitHub Issue](https://github.com/oceanbase/oceanbase/issues)
 - [Official Website](https://open.oceanbase.com/)
-- Knowledge base [Coming soon]
+
+## Community
+
+ - [Forum](https://open.oceanbase.com/answer)
+ - [DingTalk 33254054](https://h5.dingtalk.com/circle/healthCheckin.html?corpId=ding0e936c01b36c156d60c3ef38bbf6dadc&594d9=30470&cbdbhh=qwertyuiop&origin=1)
+ - [Wechat oceanbasecommunity](https://gw.alipayobjects.com/zos/oceanbase/0a69627f-8005-4c46-be1f-aac7a2b85c13/image/2022-03-01/85d42796-4e22-463a-9658-57402d7b9bc3.png)
+ - [oceanbase.slack](https://oceanbase.slack.com/)
+ - Mailist [Comming soon]
+
 
 ## Roadmap
 

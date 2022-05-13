@@ -262,6 +262,7 @@ ob_set_subtarget(ob_server table
   table/ob_htable_filters.cpp
   table/htable_filter_tab.cxx
   table/htable_filter_lex.cxx
+  table/ob_table_query_sync_processor.cpp
 )
 
 set_source_files_properties(table/htable_filter_lex.cxx PROPERTIES COMPILE_FLAGS -Wno-null-conversion)
@@ -337,11 +338,15 @@ endif()
 target_link_libraries(observer
   PRIVATE
   ob_main
+  -Wl,--start-group
   oceanbase_static
-  -static-libgcc
-  -static-libstdc++
   ${link_malloc_hook}
   ${LGPL_DEPS}
+  oblib
+  easy
+  -Wl,--end-group
+  -static-libgcc
+  -static-libstdc++
   )
 execute_process(
   COMMAND sh -c "cd ${CMAKE_SOURCE_DIR} && git rev-parse HEAD"
