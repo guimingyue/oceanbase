@@ -39,6 +39,7 @@
 #include "observer/ob_server_struct.h"
 #include "rootserver/ob_index_builder.h"
 #include "rootserver/ob_root_service.h"
+#include "observer/table/ob_table_ttl_manager.h"
 
 using namespace oceanbase::storage;
 using namespace oceanbase::common;
@@ -177,6 +178,9 @@ int ObBuildIndexBaseTask::check_partition_need_build_index(const ObPartitionKey&
     need_build = false;
     ObTaskController::get().allow_next_syslog();
     STORAGE_LOG(INFO, "The table does not exist, no need to create index, ", K(index_schema.get_table_id()));
+  } else if (INDEX_STATUS_UNAVAILABLE != new_index_schema->get_index_status()) {
+    need_build = false;
+    STORAGE_LOG(INFO, "index build is already completed, skip it", K(ret), K(new_index_schema->get_table_id()));
   } else if (OB_FAIL(schema_guard.check_partition_exist(
                  pkey.get_table_id(), pkey.get_partition_id(), check_dropped_partition, is_partition_exist))) {
     STORAGE_LOG(WARN, "fail to check partition exist", K(ret), K(pkey), K(index_schema.get_table_id()));
@@ -1416,42 +1420,18 @@ int ObBuildIndexScheduleTask::schedule_dag()
 int ObBuildIndexScheduleTask::get_data_size(int64_t &data_size)
 {
   int ret = OB_SUCCESS;
-  ObSqlString sql;
-  SMART_VAR(ObMySQLProxy::MySQLResult, res)
-  {
-    sqlclient::ObMySQLResult *result = NULL;
-    char ip[common::OB_MAX_SERVER_ADDR_SIZE] = "";
-    if (OB_INVALID_ID == index_id_ || !pkey_.is_valid() || !candidate_replica_.is_valid()) {
-      ret = OB_INVALID_ARGUMENT;
-      LOG_WARN("invalid arguments", K(ret), K(index_id_), K(pkey_), K(candidate_replica_));
-    } else if (!candidate_replica_.ip_to_string(ip, sizeof(ip))) {
-      LOG_WARN("fail to convert ObAddr to ip", K(ret));
-    } else if (OB_FAIL(sql.assign_fmt(
-                   "SELECT used_size, MAX(major_version) from %s "
-                   "WHERE tenant_id = %ld AND table_id = %ld AND partition_id = %ld  AND sstable_id = %ld "
-                   "AND svr_ip = '%s' AND svr_port = %d",
-                   OB_ALL_VIRTUAL_STORAGE_STAT_TNAME,
-                   extract_tenant_id(index_id_),
-                   pkey_.get_table_id(),
-                   pkey_.get_partition_id(),
-                   index_id_,
-                   ip,
-                   candidate_replica_.get_port()))) {
-      STORAGE_LOG(WARN, "fail to assign sql", K(ret));
-    } else if (OB_FAIL(GCTX.sql_proxy_->read(res, sql.ptr()))) {
-      LOG_WARN("fail to execute sql", K(ret), K(sql));
-    } else if (OB_ISNULL(result = res.get_result())) {
-      ret = OB_ERR_UNEXPECTED;
-      STORAGE_LOG(WARN, "error unexpected, query result must not be NULL", K(ret));
-    } else if (OB_FAIL(result->next())) {
-      if (OB_LIKELY(OB_ITER_END == ret)) {
-        ret = OB_SUCCESS;
-      } else {
-        LOG_WARN("fail to get next row", K(ret));
-      }
-    } else {
-      EXTRACT_INT_FIELD_MYSQL(*result, "used_size", data_size, int64_t);
-    }
+  data_size = 0;
+  ObFetchSstableSizeArg arg;
+  ObFetchSstableSizeRes res;
+  arg.pkey_ = pkey_;
+  arg.index_id_ = index_id_;
+  if (OB_UNLIKELY(!candidate_replica_.is_valid())) {
+    ret = OB_ERR_UNEXPECTED;
+    STORAGE_LOG(WARN, "candidate replica is invalid", K(ret), K(candidate_replica_));
+  } else if (OB_FAIL(GCTX.srv_rpc_proxy_->to(candidate_replica_).fetch_sstable_size(arg, res))) {
+    STORAGE_LOG(WARN, "fail to get sstable size", K(ret), K(arg));
+  } else {
+    data_size = res.size_;
   }
   return ret;
 }
@@ -1484,8 +1464,6 @@ int ObBuildIndexScheduleTask::process()
         STORAGE_LOG(INFO, "index schema has been deleted, skip build it", K(pkey_), K(index_id_));
         is_end = true;
       }
-    } else if (INDEX_STATUS_UNAVAILABLE != index_schema->get_index_status()) {
-      STORAGE_LOG(INFO, "index build is already completed, skip it", K(ret), K(index_id_));
     } else if (OB_FAIL(schema_guard.get_table_schema(index_schema->get_data_table_id(), table_schema))) {
       STORAGE_LOG(WARN, "fail to get table schema", K(ret));
     } else if (OB_FAIL(check_partition_need_build_index(pkey_, *index_schema, *table_schema, part_guard, need_build))) {
@@ -1704,6 +1682,7 @@ void ObCheckTenantSchemaTask::runTimerTask()
             STORAGE_LOG(WARN, "fail to set tenant schema version into map", K(ret));
           } else {
             STORAGE_LOG(INFO, "add tenant ddl task", K(task));
+            observer::ObTTLManager::get_instance().on_schema_changed(tenant_id);
           }
         }
       }
